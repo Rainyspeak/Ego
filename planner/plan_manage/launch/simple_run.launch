@@ -1,0 +1,77 @@
+<launch>
+  <arg name="map_size_x" value="40.0"/>
+  <arg name="map_size_y" value="40.0"/>
+  <arg name="map_size_z" value="3.0"/>
+
+  <arg name="odom_topic" value="/Odometry"/>
+  <arg name="cloud_topic" value="/cloud_registered"/>
+  <arg name="processed_cloud_topic" value="/cloud_ego_registered"/>
+  <arg name="cloud_frame" value="camera_init"/>
+
+  <arg name="crop_half_x" value="0.3"/>
+  <arg name="crop_half_y" value="0.3"/>
+  <arg name="crop_half_z" value="0.2"/>
+  <arg name="voxel_leaf_size" value="0.15"/>
+
+  <include file="$(find ego_planner)/launch/advanced_param.xml">
+    <arg name="map_size_x_" value="$(arg map_size_x)"/>
+    <arg name="map_size_y_" value="$(arg map_size_y)"/>
+    <arg name="map_size_z_" value="$(arg map_size_z)"/>
+    <arg name="odometry_topic" value="$(arg odom_topic)"/>
+    <!-- Depth camera topics are not used in MID360 + FastLIO mode. -->
+    <!-- <arg name="camera_pose_topic" value="/unused_camera_pose"/> -->
+    <!-- <arg name="depth_topic" value="/unused_depth"/> -->
+    <arg name="cloud_topic" value="$(arg cloud_topic)"/>
+    <arg name="processed_cloud_topic" value="$(arg processed_cloud_topic)"/>
+    <arg name="cloud_frame" value="$(arg cloud_frame)"/>
+
+    <arg name="crop_half_x" value="$(arg crop_half_x)"/>
+    <arg name="crop_half_y" value="$(arg crop_half_y)"/>
+    <arg name="crop_half_z" value="$(arg crop_half_z)"/>
+    <arg name="voxel_leaf_size" value="$(arg voxel_leaf_size)"/>
+
+    <!-- Depth camera intrinsics are not used in MID360 + FastLIO mode. -->
+    <!-- <arg name="cx" value="0.0"/> -->
+    <!-- <arg name="cy" value="0.0"/> -->
+    <!-- <arg name="fx" value="0.0"/> -->
+    <!-- <arg name="fy" value="0.0"/> -->
+
+    <arg name="max_vel" value="2.0"/>
+    <arg name="max_acc" value="3.0"/>
+    <arg name="planning_horizon" value="7.5"/>
+
+    <arg name="flight_type" value="1"/>
+
+    <arg name="point_num" value="5"/>
+    <arg name="point0_x" value="-15.0"/>
+    <arg name="point0_y" value="0.0"/>
+    <arg name="point0_z" value="1.0"/>
+    <arg name="point1_x" value="0.0"/>
+    <arg name="point1_y" value="15.0"/>
+    <arg name="point1_z" value="1.0"/>
+    <arg name="point2_x" value="15.0"/>
+    <arg name="point2_y" value="0.0"/>
+    <arg name="point2_z" value="1.0"/>
+    <arg name="point3_x" value="0.0"/>
+    <arg name="point3_y" value="-15.0"/>
+    <arg name="point3_z" value="1.0"/>
+    <arg name="point4_x" value="-15.0"/>
+    <arg name="point4_y" value="0.0"/>
+    <arg name="point4_z" value="1.0"/>
+  </include>
+
+  <node pkg="ego_planner" name="traj_server" type="traj_server" output="screen">
+    <remap from="/position_cmd" to="planning/pos_cmd"/>
+    <remap from="/odom_world" to="$(arg odom_topic)"/>
+    <param name="traj_server/time_forward" value="1.0" type="double"/>
+  </node>
+
+  <node pkg="waypoint_generator" name="waypoint_generator" type="waypoint_generator" output="screen">
+    <remap from="~odom" to="$(arg odom_topic)"/>
+    <remap from="~goal" to="/move_base_simple/goal"/>
+    <remap from="~traj_start_trigger" to="/traj_start_trigger"/>
+    <param name="waypoint_type" value="manual-lonely-waypoint"/>
+  </node>
+
+  <include file="$(find ego_planner)/launch/rviz.launch"/>
+</launch>

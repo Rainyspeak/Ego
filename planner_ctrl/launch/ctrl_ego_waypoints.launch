@@ -1,0 +1,14 @@
+<launch>
+  <arg name="takeoff_height" default="1.0"/>
+  <arg name="takeoff_hover_time" default="2.0"/>
+  <arg name="max_speed" default="1.0"/>
+  <arg name="trajectory_timeout" default="0.3"/>
+
+  <!-- This controller receives EGO preset-waypoint trajectories only; it does not subscribe to RViz goals. -->
+  <node pkg="planner_ctrl" name="ctrl_ego_waypoints" type="ctrl_ego_waypoints" output="screen">
+    <param name="takeoff_height" value="$(arg takeoff_height)" type="double"/>
+    <param name="takeoff_hover_time" value="$(arg takeoff_hover_time)" type="double"/>
+    <param name="max_speed" value="$(arg max_speed)" type="double"/>
+    <param name="trajectory_timeout" value="$(arg trajectory_timeout)" type="double"/>
+  </node>
+</launch>
