@@ -22,7 +22,7 @@
 unsigned short velocity_mask = VELOCITY2D_CONTROL;    
 unsigned short position_mask = POSITION_CONTROL;
 
-float takeoff_height = 1.0f; //全局起飞高度（米）
+float takeoff_height = 2.0f; //全局起飞高度（米）
 mavros_msgs::PositionTarget current_goal;
 nav_msgs::Odometry position_msg;
 geometry_msgs::PoseStamped target_pos;

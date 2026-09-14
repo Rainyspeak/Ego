@@ -28,6 +28,7 @@
   <arg name="point2_y"/>
   <arg name="point2_z"/>
   <arg name="point3_x"/>
+
   <arg name="point3_y"/>
   <arg name="point3_z"/>
   <arg name="point4_x"/>
@@ -52,8 +53,7 @@
     <remap from="/odom_world" to="$(arg odometry_topic)"/>
     <remap from="/grid_map/odom" to="$(arg odometry_topic)"/>
     <remap from="/grid_map/cloud" to="$(arg processed_cloud_topic)"/>
-    <!-- <remap from="/grid_map/pose" to="$(arg camera_pose_topic)"/> -->
-    <!--<remap from="/grid_map/depth" to="$(arg depth_topic)"/>-->
+    
 
     <!-- planning fsm -->
     <param name="fsm/flight_type" value="$(arg flight_type)" type="int"/>
