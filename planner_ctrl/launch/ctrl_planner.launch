@@ -1,3 +1,17 @@
 <launch>
-  <node pkg="planner_ctrl" name="ctrl_v1" type="ctrl_v1" output="screen"/>
+  <arg name="pid_enabled" default="true"/>
+  <arg name="pid_kp" default="1.0"/>
+  <arg name="pid_ki" default="0.0"/>
+  <arg name="pid_kd" default="0.0"/>
+  <arg name="pid_integral_limit" default="1.0"/>
+  <arg name="pid_output_limit" default="1.5"/>
+
+  <node pkg="planner_ctrl" name="ctrl_v1" type="ctrl_v1" output="screen">
+    <param name="pid_enabled" value="$(arg pid_enabled)" type="bool"/>
+    <param name="pid_kp" value="$(arg pid_kp)" type="double"/>
+    <param name="pid_ki" value="$(arg pid_ki)" type="double"/>
+    <param name="pid_kd" value="$(arg pid_kd)" type="double"/>
+    <param name="pid_integral_limit" value="$(arg pid_integral_limit)" type="double"/>
+    <param name="pid_output_limit" value="$(arg pid_output_limit)" type="double"/>
+  </node>
 </launch>

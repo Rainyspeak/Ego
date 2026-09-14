@@ -13,24 +13,23 @@
 #include <tf/transform_datatypes.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include "planner_ctrl/Pidparam.hpp"
 
 
-#define VELOCITY2D_CONTROL 0b101111000111 //设置好对应的掩码，从右往左依次对应PX/PY/PZ/VX/VY/VZ/AX/AY/AZ/FORCE/YAW/YAW-RATE
+
 #define POSITION_CONTROL 0b100111111000   //位置起飞：使用PX/PY/PZ/YAW
 #define PLANNER_CONTROL 0b100111000000 //轨迹跟踪：使用位置、速度和YAW（加速度位被忽略）
 
-unsigned short velocity_mask = VELOCITY2D_CONTROL;    
 unsigned short position_mask = POSITION_CONTROL;
 
 float takeoff_height = 1.5f; //全局起飞高度（米）
 mavros_msgs::PositionTarget current_goal;
 nav_msgs::Odometry position_msg;
-geometry_msgs::PoseStamped target_pos;
+//geometry_msgs::PoseStamped target_pos;
 mavros_msgs::State current_state;
+mavros_msgs::PositionTarget target_pos;
 
 
-
-int now_yaw = 0;
 float waypoint_position_tolerance = 0.15f;
 float position_x, position_y, position_z, current_yaw, targetpos_x, targetpos_y;
 float current_vel_x, current_vel_y, current_vel_z;
@@ -42,6 +41,15 @@ float ego_pos_x, ego_pos_y, ego_pos_z, ego_vel_x, ego_vel_y, ego_vel_z, ego_a_x,
 bool receive = false;//触发轨迹的条件判断
 float pi = 3.14159265;
 
+// Velocity-loop PID parameters are loaded from the node's private namespace.
+// The planner velocity is used as feed-forward and the odometry velocity is
+// used for feedback.  The resulting command is limited by pid_output_limit.
+bool pid_enabled = planner_ctrl::PidParam::kEnabled;
+double pid_kp = planner_ctrl::PidParam::kKp;
+double pid_ki = planner_ctrl::PidParam::kKi;
+double pid_kd = planner_ctrl::PidParam::kKd;
+double pid_integral_limit = planner_ctrl::PidParam::kIntegralLimit;
+double pid_output_limit = planner_ctrl::PidParam::kOutputLimit;
 
 struct Speed_limit
 {
@@ -62,13 +70,111 @@ struct Speed_limit
     }
   }
 };
+class VelocityPid
+{
+public:
+  VelocityPid() = default;
+
+  double integral_x = 0.0;
+  double integral_y = 0.0;
+  double integral_z = 0.0;
+  double previous_error_x = 0.0;
+  double previous_error_y = 0.0;
+  double previous_error_z = 0.0;
+  ros::Time last_update;
+  void reset()
+  {
+    integral_x = integral_y = integral_z = 0.0;
+    previous_error_x = previous_error_y = previous_error_z = 0.0;
+    last_update = ros::Time(0);
+  }
+  double update(double desired, double measured,double &integral, double &previous_error,const ros::Time &now);
+  void updateTime(const ros::Time &now);
+
+};
+double VelocityPid::update(double desired, double measured,double &integral, double &previous_error,const ros::Time &now)
+{
+    const double error = desired - measured;
+    double dt = 1.0 / Speed_limit::kControlRate;
+    if (!last_update.isZero())
+      dt = (now - last_update).toSec();
+    else
+      previous_error = error;
+
+    // Ignore a long callback gap so it cannot create a derivative/integral
+    // spike after startup or when ROS is paused.
+    if (dt <= 0.0 || dt > 0.5)
+    {
+      dt = 1.0 / Speed_limit::kControlRate;
+      previous_error = error;
+    }
+
+    integral += error * dt;
+    integral = std::max(-pid_integral_limit,
+                        std::min(pid_integral_limit, integral));
+    const double derivative = (error - previous_error) / dt;
+    previous_error = error;
+    return desired + pid_kp * error + pid_ki * integral + pid_kd * derivative;
+}
+void VelocityPid::updateTime(const ros::Time &now)
+{
+  last_update = now;
+}
+
+// struct VelocityPid
+// {
+//   double integral_x = 0.0;
+//   double integral_y = 0.0;
+//   double integral_z = 0.0;
+//   double previous_error_x = 0.0;
+//   double previous_error_y = 0.0;
+//   double previous_error_z = 0.0;
+//   ros::Time last_update;
+
+//   void reset()
+//   {
+//     integral_x = integral_y = integral_z = 0.0;
+//     previous_error_x = previous_error_y = previous_error_z = 0.0;
+//     last_update = ros::Time(0);
+//   }
+
+//   double update(double desired, double measured, double &integral,
+//                 double &previous_error, const ros::Time &now)
+//   {
+//     const double error = desired - measured;
+//     double dt = 1.0 / Speed_limit::kControlRate;
+//     if (!last_update.isZero())
+//       dt = (now - last_update).toSec();
+//     else
+//       previous_error = error;
+
+//     // Ignore a long callback gap so it cannot create a derivative/integral
+//     // spike after startup or when ROS is paused.
+//     if (dt <= 0.0 || dt > 0.5)
+//     {
+//       dt = 1.0 / Speed_limit::kControlRate;
+//       previous_error = error;
+//     }
+
+//     integral += error * dt;
+//     integral = std::max(-pid_integral_limit,
+//                         std::min(pid_integral_limit, integral));
+//     const double derivative = (error - previous_error) / dt;
+//     previous_error = error;
+//     return desired + pid_kp * error + pid_ki * integral + pid_kd * derivative;
+//   }
+
+//   void updateTime(const ros::Time &now) { last_update = now; }
+// };
+
+VelocityPid velocity_pid;
 
 void state_cb(const mavros_msgs::State::ConstPtr& msg){
 	current_state = *msg;
 }
 
 //read vehicle odometry
-void position_cb(const nav_msgs::Odometry::ConstPtr&msg)
+void position_cb(const nav_msgs::Odometry::ConstPtr& msg)
 {
 	position_msg=*msg;
 	position_x = position_msg.pose.pose.position.x;
@@ -86,6 +192,17 @@ void position_cb(const nav_msgs::Odometry::ConstPtr&msg)
   tf::Matrix3x3(quat).getRPY(roll,pitch,yaw);
 	current_yaw = yaw;
 }
+mavros_msgs::PositionTarget pose(const double& x, const double& y, const double& z,const double& yaw)
+{
+  target_pos.coordinate_frame = mavros_msgs::PositionTarget::FRAME_LOCAL_NED;
+  target_pos.header.stamp = ros::Time::now();
+  target_pos.type_mask = position_mask;
+  target_pos.position.x = x;
+  target_pos.position.y = y;
+  target_pos.position.z = z;
+  target_pos.yaw = yaw;
+  return target_pos;
+}
 
 //航点读取
 // void target_cb(const geometry_msgs::PoseStamped::ConstPtr& msg)
@@ -102,7 +219,7 @@ void position_cb(const nav_msgs::Odometry::ConstPtr&msg)
 quadrotor_msgs::PositionCommand ego;
 void twist_planner_cb(const quadrotor_msgs::PositionCommand::ConstPtr& msg)//ego的回调函数
 {
-	
+
     receive = true;
 	  ego = *msg;
     ego_pos_x = ego.position.x;
@@ -180,30 +297,16 @@ void take_off(ros::Publisher &local_pos_pub,ros::ServiceClient &set_mode_client,
   // 先发送一段起飞位置 setpoint，再请求 OFFBOARD。
   for (int i = 0; ros::ok() && i < 50; i++)
   {
-    current_goal.coordinate_frame = mavros_msgs::PositionTarget::FRAME_LOCAL_NED;
-    current_goal.header.stamp = ros::Time::now();
-    current_goal.type_mask = position_mask;
-    current_goal.position.x = 0.0;
-    current_goal.position.y = 0.0;
-    current_goal.position.z = takeoff_height;
-    current_goal.yaw = now_yaw;
 
-    local_pos_pub.publish(current_goal);
+    local_pos_pub.publish(pose(0,0,takeoff_height,0));
     ros::spinOnce();
     rate.sleep(); 
   }
 
   while (ros::ok())
   {
-    current_goal.coordinate_frame = mavros_msgs::PositionTarget::FRAME_LOCAL_NED;
-    current_goal.header.stamp = ros::Time::now();
-    current_goal.type_mask = position_mask;
-    current_goal.position.x = 0.0;
-    current_goal.position.y = 0.0;
-    current_goal.position.z = takeoff_height;
-    current_goal.yaw = now_yaw;
 
-    local_pos_pub.publish(current_goal);
+    local_pos_pub.publish(pose(0,0,takeoff_height,0));
 
     if (current_state.mode != "OFFBOARD")
     {
@@ -252,7 +355,22 @@ void Planner_Control()
   double velocity_x = ego_vel_x;
   double velocity_y = ego_vel_y;
   double velocity_z = ego_vel_z;
-  Speed_limit::limitVelocityNorm(velocity_x, velocity_y, velocity_z, Speed_limit::kSpeedLimit);
+  if (pid_enabled)
+  {
+    const ros::Time now = ros::Time::now();
+    velocity_x = velocity_pid.update(ego_vel_x, current_vel_x,
+                                     velocity_pid.integral_x,
+                                     velocity_pid.previous_error_x, now);
+    velocity_y = velocity_pid.update(ego_vel_y, current_vel_y,
+                                     velocity_pid.integral_y,
+                                     velocity_pid.previous_error_y, now);
+    velocity_z = velocity_pid.update(ego_vel_z, current_vel_z,
+                                     velocity_pid.integral_z,
+                                     velocity_pid.previous_error_z, now);
+    velocity_pid.updateTime(now);
+  }
+  Speed_limit::limitVelocityNorm(velocity_x, velocity_y, velocity_z,
+                                  pid_output_limit);
   current_goal.velocity.x = velocity_x;
   current_goal.velocity.y = velocity_y;
   current_goal.velocity.z = velocity_z;
@@ -267,9 +385,24 @@ int main(int argc, char **argv)
 	ros::init(argc, argv, "cxr_egoctrl_v1");
 	setlocale(LC_ALL,"");
 	ros::NodeHandle nh;
+	ros::NodeHandle nh_("~");
+
+  nh_.getParam("pid_enabled", pid_enabled);
+  nh_.getParam("pid_kp", pid_kp);
+  nh_.getParam("pid_ki", pid_ki);
+  nh_.getParam("pid_kd", pid_kd);
+  nh_.getParam("pid_integral_limit", pid_integral_limit);
+  nh_.getParam("pid_output_limit", pid_output_limit);
+  pid_integral_limit = std::max(0.0, pid_integral_limit);
+  pid_output_limit = std::max(0.1, pid_output_limit);
+  ROS_INFO("Velocity PID: enabled=%s kp=%.3f ki=%.3f kd=%.3f integral_limit=%.3f output_limit=%.3f",
+           pid_enabled ? "true" : "false", pid_kp, pid_ki, pid_kd,
+           pid_integral_limit, pid_output_limit);
+
+
 	ros::Subscriber state_sub = nh.subscribe<mavros_msgs::State>
 	("/mavros/state", 10, state_cb);//读取飞控状态的话题
-  
+
 	ros::Publisher local_pos_pub = nh.advertise<mavros_msgs::PositionTarget>
 	("/mavros/setpoint_raw/local", 1); 
 	
@@ -331,6 +464,7 @@ int main(int argc, char **argv)
         hold_yaw = current_yaw;
       }
       Position_Hold();
+      velocity_pid.reset();
     }
 
 		local_pos_pub.publish(current_goal);
