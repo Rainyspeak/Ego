@@ -22,7 +22,7 @@
 unsigned short velocity_mask = VELOCITY2D_CONTROL;    
 unsigned short position_mask = POSITION_CONTROL;
 
-float takeoff_height = 2.0f; //全局起飞高度（米）
+float takeoff_height = 1.5f; //全局起飞高度（米）
 mavros_msgs::PositionTarget current_goal;
 nav_msgs::Odometry position_msg;
 geometry_msgs::PoseStamped target_pos;
@@ -169,75 +169,75 @@ void Position_Hold()
                     hold_position_x, hold_position_y, hold_position_z);
 }
 
-// void take_off(ros::Publisher &local_pos_pub,ros::ServiceClient &set_mode_client,ros::ServiceClient &arming_client,ros::Rate &rate)
-// {
-//   mavros_msgs::SetMode offb_set_mode;
-//   offb_set_mode.request.custom_mode = "OFFBOARD";
+void take_off(ros::Publisher &local_pos_pub,ros::ServiceClient &set_mode_client,ros::ServiceClient &arming_client,ros::Rate &rate)
+{
+  mavros_msgs::SetMode offb_set_mode;
+  offb_set_mode.request.custom_mode = "OFFBOARD";
 
-//   mavros_msgs::CommandBool arm_cmd;
-//   arm_cmd.request.value = true;
+  mavros_msgs::CommandBool arm_cmd;
+  arm_cmd.request.value = true;
 
-//   // 先发送一段起飞位置 setpoint，再请求 OFFBOARD。
-//   for (int i = 0; ros::ok() && i < 100; i++)
-//   {
-//     current_goal.coordinate_frame = mavros_msgs::PositionTarget::FRAME_LOCAL_NED;
-//     current_goal.header.stamp = ros::Time::now();
-//     current_goal.type_mask = position_mask;
-//     current_goal.position.x = 0.0;
-//     current_goal.position.y = 0.0;
-//     current_goal.position.z = takeoff_height;
-//     current_goal.yaw = now_yaw;
+  // 先发送一段起飞位置 setpoint，再请求 OFFBOARD。
+  for (int i = 0; ros::ok() && i < 50; i++)
+  {
+    current_goal.coordinate_frame = mavros_msgs::PositionTarget::FRAME_LOCAL_NED;
+    current_goal.header.stamp = ros::Time::now();
+    current_goal.type_mask = position_mask;
+    current_goal.position.x = 0.0;
+    current_goal.position.y = 0.0;
+    current_goal.position.z = takeoff_height;
+    current_goal.yaw = now_yaw;
 
-//     local_pos_pub.publish(current_goal);
-//     ros::spinOnce();
-//     rate.sleep(); 
-//   }
+    local_pos_pub.publish(current_goal);
+    ros::spinOnce();
+    rate.sleep(); 
+  }
 
-//   while (ros::ok())
-//   {
-//     current_goal.coordinate_frame = mavros_msgs::PositionTarget::FRAME_LOCAL_NED;
-//     current_goal.header.stamp = ros::Time::now();
-//     current_goal.type_mask = position_mask;
-//     current_goal.position.x = 0.0;
-//     current_goal.position.y = 0.0;
-//     current_goal.position.z = takeoff_height;
-//     current_goal.yaw = now_yaw;
+  while (ros::ok())
+  {
+    current_goal.coordinate_frame = mavros_msgs::PositionTarget::FRAME_LOCAL_NED;
+    current_goal.header.stamp = ros::Time::now();
+    current_goal.type_mask = position_mask;
+    current_goal.position.x = 0.0;
+    current_goal.position.y = 0.0;
+    current_goal.position.z = takeoff_height;
+    current_goal.yaw = now_yaw;
 
-//     local_pos_pub.publish(current_goal);
+    local_pos_pub.publish(current_goal);
 
-//     if (current_state.mode != "OFFBOARD")
-//     {
-//       if (set_mode_client.call(offb_set_mode) && offb_set_mode.response.mode_sent)
-//       {
-//         ROS_INFO("Offboard mode enabled");
-//       }
-//     }
-//     else if (!current_state.armed)
-//     {
-//       if (arming_client.call(arm_cmd) && arm_cmd.response.success)
-//       {
-//         ROS_INFO("arm success, take off");
-//       }
-//     }
-//     else if (position_z <= takeoff_height - 0.2f)
-//     {
-//       ROS_INFO_THROTTLE(1.0, "Take off... z=%.2f", position_z);
-//     }
-//     else
-//     {
-//       hold_position_x = position_x;
-//       hold_position_y = position_y;
-//       hold_position_z = takeoff_height;
-//       hold_yaw = current_yaw;
-//       waypoint_hold = true;
-//       ROS_INFO("Takeoff complete, z=%.2f", position_z);
-//       return;
-//     }
+    if (current_state.mode != "OFFBOARD")
+    {
+      if (set_mode_client.call(offb_set_mode) && offb_set_mode.response.mode_sent)
+      {
+        ROS_INFO("Offboard mode enabled");
+      }
+    }
+    else if (!current_state.armed)
+    {
+      if (arming_client.call(arm_cmd) && arm_cmd.response.success)
+      {
+        ROS_INFO("arm success, take off");
+      }
+    }
+    else if (position_z <= takeoff_height - 0.2f)
+    {
+      ROS_INFO_THROTTLE(1.0, "Take off... z=%.2f", position_z);
+    }
+    else
+    {
+      hold_position_x = position_x;
+      hold_position_y = position_y;
+      hold_position_z = takeoff_height;
+      hold_yaw = current_yaw;
+      //waypoint_hold = true;
+      ROS_INFO("Takeoff complete, z=%.2f", position_z);
+      return;
+    }
 
-//     ros::spinOnce();
-//     rate.sleep();
-//   }
-// }
+    ros::spinOnce();
+    rate.sleep();
+  }
+}
 
 void Planner_Control()
 {
@@ -260,10 +260,6 @@ void Planner_Control()
   current_goal.yaw = ego_yaw;
   current_goal.yaw_rate = 0.0;
 
-//   ROS_INFO_THROTTLE(0.5, "EGO trajectory speed: vel_xyz = %.2f",
-//                     std::sqrt(std::pow(current_goal.velocity.x, 2) +
-//                               std::pow(current_goal.velocity.y, 2) +
-//                               std::pow(current_goal.velocity.z, 2)));
 }
 
 int main(int argc, char **argv)
@@ -290,13 +286,16 @@ int main(int argc, char **argv)
   // ros::Subscriber target_sub = nh.subscribe<geometry_msgs::PoseStamped>
 	// ("move_base_simple/goal", 10, target_cb);
 
-	ros::Subscriber position_sub=nh.subscribe<nav_msgs::Odometry>
-  ("/vins_fusion/odometry",10, position_cb);
+	// ros::Subscriber position_sub=nh.subscribe<nav_msgs::Odometry>
+  // ("/vins_fusion/odometry",10, position_cb);
+
+  ros::Subscriber position_sub=nh.subscribe<nav_msgs::Odometry>
+  ("/mavros/local_position/odom",10, position_cb);
 
 	ros::Rate rate(Speed_limit::kControlRate);
    
 	
-	//take_off(local_pos_pub, set_mode_client, arming_client, rate);
+	take_off(local_pos_pub, set_mode_client, arming_client, rate);
 
 	while(ros::ok())
 	{
