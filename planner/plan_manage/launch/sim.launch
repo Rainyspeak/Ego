@@ -1,43 +1,45 @@
 <launch>
-  <arg name="map_size_x" value="45.0"/>
-  <arg name="map_size_y" value="45.0"/>
+  <arg name="map_size_x" value="40.0"/>
+  <arg name="map_size_y" value="40.0"/>
   <arg name="map_size_z" value="3.0"/>
 
-  <arg name="odom_topic" value="/Odometry"/>
-  <arg name="cloud_topic" value="/cloud_registered"/>
-  <arg name="processed_cloud_topic" value="/cloud_ego_registered"/>
-  <arg name="cloud_frame" value="camera_init"/>
+  <!--<arg name="odom_topic" value="/Odometry"/>-->
+  <arg name="odom_topic" value="/mavros/local_position/odom"/>
+
+  <!--<arg name="cloud_topic" value="/cloud_registered"/>-->
+  <arg name="processed_cloud_topic" value="/livox/lidar_world"/>
+  <arg name="cloud_frame" value="world"/>
 
   <arg name="crop_half_x" value="0.3"/>
   <arg name="crop_half_y" value="0.3"/>
   <arg name="crop_half_z" value="0.2"/>
   <arg name="voxel_leaf_size" value="0.15"/>
-  <arg name="start_waypoint_generator" default="false"/>
-  <arg name="start_rviz" default="false"/>
+  <arg name="start_waypoint_generator" default="true"/>
+  <arg name="start_rviz" default="true"/>
 
   <!-- EGO upper-level target mode and preset waypoint sequence. -->
-  <arg name="flight_type" default="2"/>
-  <arg name="preset_wait_for_trigger" default="true"/>
-  <arg name="point_num" default="3"/>
-  <arg name="point0_x" default="3.0"/>
+  <arg name="flight_type" default="1"/>
+  <arg name="preset_wait_for_trigger" default="false"/>
+  <arg name="point_num" default="5"/>
+  <arg name="point0_x" default="-15.0"/>
   <arg name="point0_y" default="0.0"/>
   <arg name="point0_z" default="1.0"/>
   <arg name="point1_x" default="0.0"/>
-  <arg name="point1_y" default="3.0"/>
+  <arg name="point1_y" default="15.0"/>
   <arg name="point1_z" default="1.0"/>
-  <arg name="point2_x" default="5.0"/>
+  <arg name="point2_x" default="15.0"/>
   <arg name="point2_y" default="0.0"/>
   <arg name="point2_z" default="1.0"/>
-
- <!-- These additional waypoints are defined but not used in the default configuration. -->
   <arg name="point3_x" default="0.0"/>
-  <arg name="point3_y" default="0.0"/>
+
+  
+  <arg name="point3_y" default="-15.0"/>
   <arg name="point3_z" default="1.0"/>
-  <arg name="point4_x" default="0.0"/>
+  <arg name="point4_x" default="-15.0"/>
   <arg name="point4_y" default="0.0"/>
   <arg name="point4_z" default="1.0"/>
 
-  <include file="$(find ego_planner)/launch/mid360.xml">
+  <include file="$(find ego_planner)/launch/sim.xml">
     <arg name="map_size_x_" value="$(arg map_size_x)"/>
     <arg name="map_size_y_" value="$(arg map_size_y)"/>
     <arg name="map_size_z_" value="$(arg map_size_z)"/>
@@ -45,7 +47,7 @@
     <!-- Depth camera topics are disabled in LiDAR cloud mode. -->
     <!-- <arg name="camera_pose_topic" value="/unused_camera_pose"/> -->
     <!-- <arg name="depth_topic" value="/unused_depth"/> -->
-    <arg name="cloud_topic" value="$(arg cloud_topic)"/>
+    <!--<arg name="cloud_topic" value="$(arg cloud_topic)"/>-->
     <arg name="processed_cloud_topic" value="$(arg processed_cloud_topic)"/>
     <arg name="cloud_frame" value="$(arg cloud_frame)"/>
 
@@ -106,11 +108,11 @@
     <param name="tf45" value="false"/>
   </node>
   
-  <node pkg="tf" type="static_transform_publisher" name="world_to_camera_init"
+  <!--<node pkg="tf" type="static_transform_publisher" name="world_to_camera_init"
       args="0 0 0 0 0 0 world camera_init 100"/>
 
   <node pkg="tf" type="static_transform_publisher" name="body_to_base_link"
-      args="0 0 0 0 0 0 body base_link 100"/>
+      args="0 0 0 0 0 0 body base_link 100"/>-->
 
   <include file="$(find ego_planner)/launch/rviz_mid360.launch" if="$(arg start_rviz)"/>
 </launch>
