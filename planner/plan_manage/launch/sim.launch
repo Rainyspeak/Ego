@@ -16,6 +16,8 @@
   <arg name="voxel_leaf_size" value="0.15"/>
   <arg name="start_waypoint_generator" default="true"/>
   <arg name="start_rviz" default="true"/>
+  <!-- 仿真 SE3 控制器(se3_hof, 对齐 OpenDrone Gen3)：/planner_cmd -> planner_adapter -> /planner/output -> 姿态推力指令 -->
+  <arg name="start_se3_hof" default="true"/>
 
   <!-- EGO upper-level target mode and preset waypoint sequence. -->
   <arg name="flight_type" default="1"/>
@@ -38,6 +40,29 @@
   <arg name="point4_x" default="-15.0"/>
   <arg name="point4_y" default="0.0"/>
   <arg name="point4_z" default="1.0"/>
+  
+  <node pkg="tf" type="static_transform_publisher" name="world_map_linker"
+      args="0 0 0 0 0 0 world map 100"/>
+  <node pkg="tf" type="static_transform_publisher" name="base_link_to_livox_link"
+      args="0.07 0 0.072 0 0.3925 0 base_link livox_link 50"/>
+
+  <!-- 点云转换节点：/livox/lidar -> $(processed_cloud_topic)，自带滤波 -->
+  <node pkg="ego_planner" name="pointcloud_to_world" type="pointcloud_to_world.py" output="screen">
+    <param name="source_topic" value="/livox/lidar"/>
+    <param name="output_topic" value="$(arg processed_cloud_topic)"/>
+    <param name="source_frame" value="livox_link"/>
+    <param name="target_frame" value="$(arg cloud_frame)"/>
+    <param name="lookup_timeout" value="0.1"/>
+    <param name="use_latest_on_extrapolation" value="false"/>
+    <param name="cloud_timeout" value="1.0"/>
+    <param name="log_interval" value="2.0"/>
+    <!-- 滤波(替代实飞链路中 cloud_preprocess_node 的角色) -->
+    <param name="filter_enable" value="true"/>
+    <param name="min_range" value="0.3"/>
+    <param name="max_range" value="15.0"/>
+    <param name="voxel_leaf_size" value="$(arg voxel_leaf_size)"/>
+    <param name="max_points" value="80000"/>
+  </node>
 
   <include file="$(find ego_planner)/launch/sim.xml">
     <arg name="map_size_x_" value="$(arg map_size_x)"/>
@@ -113,6 +138,7 @@
 
   <node pkg="tf" type="static_transform_publisher" name="body_to_base_link"
       args="0 0 0 0 0 0 body base_link 100"/>-->
+
 
   <include file="$(find ego_planner)/launch/rviz_mid360.launch" if="$(arg start_rviz)"/>
 </launch>

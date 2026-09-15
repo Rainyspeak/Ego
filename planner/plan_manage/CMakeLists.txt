@@ -75,4 +75,9 @@ add_dependencies(traj_server ${${PROJECT_NAME}_EXPORTED_TARGETS})
 add_executable(cloud_preprocess_node src/cloud_preprocess.cpp)
 target_link_libraries(cloud_preprocess_node ${catkin_LIBRARIES} ${PCL_LIBRARIES})
 
+# 仿真点云转换节点(Python)
+catkin_install_python(PROGRAMS scripts/pointcloud_to_world.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
 

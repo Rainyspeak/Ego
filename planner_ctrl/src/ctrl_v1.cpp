@@ -50,6 +50,8 @@ double pid_ki = planner_ctrl::PidParam::kKi;
 double pid_kd = planner_ctrl::PidParam::kKd;
 double pid_integral_limit = planner_ctrl::PidParam::kIntegralLimit;
 double pid_output_limit = planner_ctrl::PidParam::kOutputLimit;
+double position_kp = planner_ctrl::PidParam::kPositionKp;
+double position_error_limit = planner_ctrl::PidParam::kPositionErrorLimit;
 
 struct Speed_limit
 {
@@ -355,16 +357,31 @@ void Planner_Control()
   double velocity_x = ego_vel_x;
   double velocity_y = ego_vel_y;
   double velocity_z = ego_vel_z;
+
+  // Position feedback: correct the planner feed-forward velocity using the
+  // live odometry position before entering the velocity PID loop.
+  const double position_error_x = std::max(-position_error_limit,
+                                           std::min(position_error_limit,
+                                                    ego_pos_x - position_x));
+  const double position_error_y = std::max(-position_error_limit,
+                                           std::min(position_error_limit,
+                                                    ego_pos_y - position_y));
+  const double position_error_z = std::max(-position_error_limit,
+                                           std::min(position_error_limit,
+                                                    ego_pos_z - position_z));
+  velocity_x += position_kp * position_error_x;
+  velocity_y += position_kp * position_error_y;
+  velocity_z += position_kp * position_error_z;
   if (pid_enabled)
   {
     const ros::Time now = ros::Time::now();
-    velocity_x = velocity_pid.update(ego_vel_x, current_vel_x,
+    velocity_x = velocity_pid.update(velocity_x, current_vel_x,
                                      velocity_pid.integral_x,
                                      velocity_pid.previous_error_x, now);
-    velocity_y = velocity_pid.update(ego_vel_y, current_vel_y,
+    velocity_y = velocity_pid.update(velocity_y, current_vel_y,
                                      velocity_pid.integral_y,
                                      velocity_pid.previous_error_y, now);
-    velocity_z = velocity_pid.update(ego_vel_z, current_vel_z,
+    velocity_z = velocity_pid.update(velocity_z, current_vel_z,
                                      velocity_pid.integral_z,
                                      velocity_pid.previous_error_z, now);
     velocity_pid.updateTime(now);
@@ -393,11 +410,15 @@ int main(int argc, char **argv)
   nh_.getParam("pid_kd", pid_kd);
   nh_.getParam("pid_integral_limit", pid_integral_limit);
   nh_.getParam("pid_output_limit", pid_output_limit);
+  nh_.getParam("position_kp", position_kp);
+  nh_.getParam("position_error_limit", position_error_limit);
   pid_integral_limit = std::max(0.0, pid_integral_limit);
   pid_output_limit = std::max(0.1, pid_output_limit);
-  ROS_INFO("Velocity PID: enabled=%s kp=%.3f ki=%.3f kd=%.3f integral_limit=%.3f output_limit=%.3f",
-           pid_enabled ? "true" : "false", pid_kp, pid_ki, pid_kd,
-           pid_integral_limit, pid_output_limit);
+  position_kp = std::max(0.0, position_kp);
+  position_error_limit = std::max(0.0, position_error_limit);
+  // ROS_INFO("Velocity PID: enabled=%s kp=%.3f ki=%.3f kd=%.3f integral_limit=%.3f output_limit=%.3f",
+  //          pid_enabled ? "true" : "false", pid_kp, pid_ki, pid_kd,
+  //          pid_integral_limit, pid_output_limit);
 
 
 	ros::Subscriber state_sub = nh.subscribe<mavros_msgs::State>

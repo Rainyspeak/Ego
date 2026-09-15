@@ -5,6 +5,8 @@
   <arg name="pid_kd" default="0.0"/>
   <arg name="pid_integral_limit" default="1.0"/>
   <arg name="pid_output_limit" default="1.5"/>
+  <arg name="position_kp" default="0.8"/>
+  <arg name="position_error_limit" default="1.0"/>
 
   <node pkg="planner_ctrl" name="ctrl_v1" type="ctrl_v1" output="screen">
     <param name="pid_enabled" value="$(arg pid_enabled)" type="bool"/>
@@ -13,5 +15,7 @@
     <param name="pid_kd" value="$(arg pid_kd)" type="double"/>
     <param name="pid_integral_limit" value="$(arg pid_integral_limit)" type="double"/>
     <param name="pid_output_limit" value="$(arg pid_output_limit)" type="double"/>
+    <param name="position_kp" value="$(arg position_kp)" type="double"/>
+    <param name="position_error_limit" value="$(arg position_error_limit)" type="double"/>
   </node>
 </launch>

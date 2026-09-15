@@ -1,0 +1,33 @@
+<launch>
+  <!-- SE3 仿真控制器(对齐 OpenDrone Gen3)。
+       planner_adapter: 规划器原生输出 -> /planner/output (planner_ctrl/PlannerOutput 统一消息)
+       se3_hof: 订阅 /planner/output，发布 /mavros/setpoint_raw/attitude 与 /flight_state；
+                enable_sim=true 时自动 OFFBOARD(预热计数+限频)与解锁，起飞后进入任务跟踪。 -->
+  <arg name="takeoff_height" default="1.5"/>
+  <arg name="geo_fence_x" default="50.0"/>
+  <arg name="geo_fence_y" default="50.0"/>
+  <arg name="geo_fence_z" default="6.0"/>
+
+  
+  <arg name="planner_cmd_topic" default="/planner_cmd"/>
+  <arg name="planner_output_topic" default="/planner/output"/>
+  <arg name="use_dynamic_reconfigure" default="false"/>
+
+  <!-- /planner_cmd(PositionCommand) -> /planner/output(planner_ctrl/PlannerOutput) -->
+  <node pkg="planner_ctrl" name="planner_adapter" type="planner_adapter.py" output="screen">
+    <param name="adapter_type" value="position_command"/>
+    <param name="input_topic" value="$(arg planner_cmd_topic)"/>
+    <param name="planner_output_topic" value="$(arg planner_output_topic)"/>
+    <param name="frame_id" value="world"/>
+  </node>
+
+  <node pkg="planner_ctrl" name="se3_hof" type="se3_hof" output="screen">
+    <param name="enable_sim" value="true"/>
+    <param name="auto_takeoff" value="true"/>
+    <param name="takeoff_height" value="$(arg takeoff_height)"/>
+    <param name="geo_fence/x" value="$(arg geo_fence_x)"/>
+    <param name="geo_fence/y" value="$(arg geo_fence_y)"/>
+    <param name="geo_fence/z" value="$(arg geo_fence_z)"/>
+    <param name="use_dynamic_reconfigure" value="$(arg use_dynamic_reconfigure)"/>
+  </node>
+</launch>
