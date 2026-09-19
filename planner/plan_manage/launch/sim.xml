@@ -8,9 +8,9 @@
   <arg name="processed_cloud_topic" default="/cloud_ego_registered"/>
   <arg name="cloud_frame" default="world"/>
 
-  <arg name="crop_half_x" default="0.3"/>
-  <arg name="crop_half_y" default="0.3"/>
-  <arg name="crop_half_z" default="0.2"/>
+  <arg name="crop_half_x" default="0.4"/>
+  <arg name="crop_half_y" default="0.35"/>
+  <arg name="crop_half_z" default="0.25"/>
   <arg name="voxel_leaf_size" default="0.15"/>
 
   <arg name="max_vel"/>
@@ -88,7 +88,7 @@
     <param name="grid_map/local_update_range_x" value="5.5"/>
     <param name="grid_map/local_update_range_y" value="5.5"/>
     <param name="grid_map/local_update_range_z" value="4.5"/>
-    <param name="grid_map/obstacles_inflation" value="0.20"/>
+    <param name="grid_map/obstacles_inflation" value="0.30"/>
     <param name="grid_map/local_map_margin" value="30"/>
     <param name="grid_map/ground_height" value="-0.01"/>
 
@@ -132,7 +132,7 @@
     <param name="optimization/lambda_fitness" value="1.2" type="double"/>
 
     <!-- 控制点离障碍的期望安全距离(软约束)。代码默认-1(无效)，必须在launch配置 -->
-    <param name="optimization/dist0" value="0.20" type="double"/>
+    <param name="optimization/dist0" value="0.10" type="double"/>
 
     <param name="optimization/max_vel" value="$(arg max_vel)" type="double"/>
     <param name="optimization/max_acc" value="$(arg max_acc)" type="double"/>

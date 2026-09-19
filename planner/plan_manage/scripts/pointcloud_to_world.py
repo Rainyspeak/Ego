@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# 移植自 OpenDrone (https://gitee.com/tyx6/OpenDrone) opendrone/scripts/pointcloud_to_world.py
 # 作用：订阅雷达原始点云，用 tf2 变换到目标坐标系(默认 world)，可选距离/Z轴/体素/点数滤波后发布。
 # 仿真链路：Gazebo Mid360 插件 /livox/lidar -> 本节点 -> /livox/lidar_world -> ego_planner/grid_map/cloud
 # 所需 TF 链：world -> map(静态) -> base_link(mavros local_position tf) -> livox_link(静态外参)

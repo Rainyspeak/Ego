@@ -28,7 +28,7 @@ struct Odom_Data_t{
 	Odom_Data_t(){
 		recv_new_msg = false;
 	}
-	void feed(nav_msgs::Odometry ConstPtr pMsg, bool enu_frame, bool vel_in_body){
+	void feed(nav_msgs::Odometry::ConstPtr pMsg, bool enu_frame, bool vel_in_body){
 		msg = *pMsg;
 		rcv_stamp = ros::Time::now();
 		recv_new_msg = true;

@@ -1,9 +1,6 @@
 <launch>
-  <!-- SE3 仿真控制器(对齐 OpenDrone Gen3)。
-       planner_adapter: 规划器原生输出 -> /planner/output (planner_ctrl/PlannerOutput 统一消息)
-       se3_hof: 订阅 /planner/output，发布 /mavros/setpoint_raw/attitude 与 /flight_state；
-                自动 OFFBOARD(预热计数+限频)与 MAVLink 解锁(默认开启，可用 enable_auto_offboard/enable_auto_arm 关闭)，起飞后进入任务跟踪。 -->
-  <arg name="takeoff_height" default="1.5"/>
+ 
+  <arg name="takeoff_height" default="2.0"/>
   <arg name="geo_fence_x" default="50.0"/>
   <arg name="geo_fence_y" default="50.0"/>
   <arg name="geo_fence_z" default="6.0"/>
@@ -13,7 +10,7 @@
   <arg name="planner_output_topic" default="/planner/output"/>
   <arg name="use_dynamic_reconfigure" default="false"/>
 
-  <!-- /planner_cmd(PositionCommand) -> /planner/output(planner_ctrl/PlannerOutput) -->
+
   <node pkg="planner_ctrl" name="planner_adapter" type="planner_adapter.py" output="screen">
     <param name="adapter_type" value="position_command"/>
     <param name="input_topic" value="$(arg planner_cmd_topic)"/>

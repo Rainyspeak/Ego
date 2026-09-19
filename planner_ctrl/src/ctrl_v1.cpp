@@ -363,13 +363,13 @@ void Planner_Control()
   // live odometry position before entering the velocity PID loop.
   const double position_error_x = std::max(-position_error_limit,
                                            std::min(position_error_limit,
-                                                    ego_pos_x - position_x));
+                                                    static_cast<double>(ego_pos_x - position_x)));
   const double position_error_y = std::max(-position_error_limit,
                                            std::min(position_error_limit,
-                                                    ego_pos_y - position_y));
+                                                    static_cast<double>(ego_pos_y - position_y)));
   const double position_error_z = std::max(-position_error_limit,
                                            std::min(position_error_limit,
-                                                    ego_pos_z - position_z));
+                                                    static_cast<double>(ego_pos_z - position_z)));
   velocity_x += position_kp * position_error_x;
   velocity_y += position_kp * position_error_y;
   velocity_z += position_kp * position_error_z;

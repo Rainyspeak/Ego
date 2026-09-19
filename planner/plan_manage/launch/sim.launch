@@ -10,14 +10,14 @@
   <arg name="processed_cloud_topic" value="/livox/lidar_world"/>
   <arg name="cloud_frame" value="world"/>
 
-  <arg name="crop_half_x" value="0.3"/>
-  <arg name="crop_half_y" value="0.3"/>
+  <arg name="crop_half_x" value="0.4"/>
+  <arg name="crop_half_y" value="0.35"/>
   <arg name="crop_half_z" value="0.2"/>
   <arg name="voxel_leaf_size" value="0.15"/>
   <arg name="start_waypoint_generator" default="true"/>
   <arg name="start_rviz" default="true"/>
-  <!-- 仿真 SE3 控制器(se3_hof, 对齐 OpenDrone Gen3)：/planner_cmd -> planner_adapter -> /planner/output -> 姿态推力指令 -->
-  <arg name="start_se3_hof" default="true"/>
+
+  <!--<arg name="start_se3_hof" default="true"/>-->
 
   <!-- EGO upper-level target mode and preset waypoint sequence. -->
   <arg name="flight_type" default="1"/>
@@ -82,8 +82,8 @@
     <arg name="voxel_leaf_size" value="$(arg voxel_leaf_size)"/>
 
 
-    <arg name="max_vel" value="1.0"/>
-    <arg name="max_acc" value="2.0"/>
+    <arg name="max_vel" value="1.5"/>
+    <arg name="max_acc" value="2.5"/>
     <arg name="planning_horizon" value="10.0"/>
 
     <!-- 1: RViz manual target, 2: EGO upper-level preset waypoint sequence. -->
