@@ -86,8 +86,8 @@
     </node>
 
 
-    <node pkg="tf" type="static_transform_publisher" name="world_map_linker" args="0 0 0 0 0 0 world map 100" />
-    <node pkg="tf" type="static_transform_publisher" name="world_to_base_link" args="0.1 0 0.0 0.0 0 0.0 world base_link 100"/>
+    <node pkg="tf" type="static_transform_publisher" name="world_to_map" args="0 0 0 0 0 0 world map 100" />
+    <node pkg="tf" type="static_transform_publisher" name="world_to_base_link" args="0.0 0 0.0 0.0 0 0.0 world base_link 100"/>
 
   <node name="rviz" pkg="rviz" type="rviz" args="-d $(find ego_planner)/launch/d435i.rviz" required="true" />
   
