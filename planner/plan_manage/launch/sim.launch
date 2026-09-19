@@ -1,7 +1,7 @@
 <launch>
   <arg name="map_size_x" value="40.0"/>
   <arg name="map_size_y" value="40.0"/>
-  <arg name="map_size_z" value="3.0"/>
+  <arg name="map_size_z" value="8.0"/>
 
   <!--<arg name="odom_topic" value="/Odometry"/>-->
   <arg name="odom_topic" value="/mavros/local_position/odom"/>
@@ -64,15 +64,16 @@
     <param name="max_points" value="80000"/>
   </node>
 
-  <include file="$(find ego_planner)/launch/sim.xml">
+  <include file="$(find ego_planner)/config/sim.xml">
     <arg name="map_size_x_" value="$(arg map_size_x)"/>
     <arg name="map_size_y_" value="$(arg map_size_y)"/>
     <arg name="map_size_z_" value="$(arg map_size_z)"/>
     <arg name="odometry_topic" value="$(arg odom_topic)"/>
     <!-- Depth camera topics are disabled in LiDAR cloud mode. -->
     <!-- <arg name="camera_pose_topic" value="/unused_camera_pose"/> -->
-    <!-- <arg name="depth_topic" value="/unused_depth"/> -->
+    <!-- <arg name="depth_topic" value="/unused_depth"/> -->\
     <!--<arg name="cloud_topic" value="$(arg cloud_topic)"/>-->
+
     <arg name="processed_cloud_topic" value="$(arg processed_cloud_topic)"/>
     <arg name="cloud_frame" value="$(arg cloud_frame)"/>
 
@@ -139,7 +140,6 @@
   <node pkg="tf" type="static_transform_publisher" name="body_to_base_link"
       args="0 0 0 0 0 0 body base_link 100"/>-->
 
-
-  <include file="$(find ego_planner)/launch/rviz_mid360.launch" if="$(arg start_rviz)"/>
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find ego_planner)/rviz/sim.rviz" required="true" />
 </launch>
 

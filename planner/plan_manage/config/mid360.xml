@@ -85,10 +85,10 @@
     <param name="grid_map/map_size_x" value="$(arg map_size_x_)"/>
     <param name="grid_map/map_size_y" value="$(arg map_size_y_)"/>
     <param name="grid_map/map_size_z" value="$(arg map_size_z_)"/>
-    <param name="grid_map/local_update_range_x" value="5.5"/>
-    <param name="grid_map/local_update_range_y" value="5.5"/>
-    <param name="grid_map/local_update_range_z" value="4.5"/>
-    <param name="grid_map/obstacles_inflation" value="0.27"/>
+    <param name="grid_map/local_update_range_x" value="10"/>
+    <param name="grid_map/local_update_range_y" value="10"/>
+    <param name="grid_map/local_update_range_z" value="10"/>
+    <param name="grid_map/obstacles_inflation" value="0.30"/>
     <param name="grid_map/local_map_margin" value="30"/>
     <param name="grid_map/ground_height" value="-0.01"/>
 

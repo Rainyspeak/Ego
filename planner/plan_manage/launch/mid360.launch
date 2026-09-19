@@ -37,14 +37,13 @@
   <arg name="point4_y" default="0.0"/>
   <arg name="point4_z" default="1.0"/>
 
-  <include file="$(find ego_planner)/launch/mid360.xml">
+  <include file="$(find ego_planner)/config/mid360.xml">
     <arg name="map_size_x_" value="$(arg map_size_x)"/>
     <arg name="map_size_y_" value="$(arg map_size_y)"/>
     <arg name="map_size_z_" value="$(arg map_size_z)"/>
     <arg name="odometry_topic" value="$(arg odom_topic)"/>
-    <!-- Depth camera topics are disabled in LiDAR cloud mode. -->
-    <!-- <arg name="camera_pose_topic" value="/unused_camera_pose"/> -->
-    <!-- <arg name="depth_topic" value="/unused_depth"/> -->
+
+
     <arg name="cloud_topic" value="$(arg cloud_topic)"/>
     <arg name="processed_cloud_topic" value="$(arg processed_cloud_topic)"/>
     <arg name="cloud_frame" value="$(arg cloud_frame)"/>
@@ -55,11 +54,12 @@
     <arg name="voxel_leaf_size" value="$(arg voxel_leaf_size)"/>
 
 
-    <arg name="max_vel" value="1.0"/>
+    <arg name="max_vel" value="1.3"/>
     <arg name="max_acc" value="2.0"/>
     <arg name="planning_horizon" value="10.0"/>
 
     <!-- 1: RViz manual target, 2: EGO upper-level preset waypoint sequence. -->
+    
     <arg name="flight_type" value="$(arg flight_type)"/>
     <arg name="preset_wait_for_trigger" value="$(arg preset_wait_for_trigger)"/>
 
@@ -112,6 +112,6 @@
   <node pkg="tf" type="static_transform_publisher" name="body_to_base_link"
       args="0 0 0 0 0 0 body base_link 100"/>
 
-  <include file="$(find ego_planner)/launch/rviz_mid360.launch" if="$(arg start_rviz)"/>
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find ego_planner)/rviz/sim.rviz" required="true" />
 </launch>
 
