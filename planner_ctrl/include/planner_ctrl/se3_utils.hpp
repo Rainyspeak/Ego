@@ -1,7 +1,7 @@
 #ifndef PLANNER_CTRL_SE3_UTILS_HPP
 #define PLANNER_CTRL_SE3_UTILS_HPP
 
-// 移植自 OpenDrone se3_hopf/include/se3_hopf/utils.hpp
+
 
 #include <Eigen/Dense>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>

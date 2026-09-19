@@ -75,7 +75,8 @@ struct Speed_limit
 class VelocityPid
 {
 public:
-  VelocityPid() = default;
+  VelocityPid(){};
+  ~VelocityPid(){};
 
   double integral_x = 0.0;
   double integral_y = 0.0;

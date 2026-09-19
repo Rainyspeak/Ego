@@ -43,7 +43,6 @@ private:
     Desired_State_t desired_state_;
     SE3_HOF_CONTROLLER se3_hof_;
 
-    bool sim_enable_;
     bool arm_triggered_{false};
     bool offboard_triggered_{false};
     bool auto_takeoff_{false};

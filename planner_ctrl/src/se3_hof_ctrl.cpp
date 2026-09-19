@@ -23,9 +23,8 @@ Se3HofCtrl::Se3HofCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &private
 
     flight_state_pub_ = nh_.advertise<std_msgs::Int8>("/flight_state", 10);
 
-    private_nh_.param<bool>("enable_sim", sim_enable_, false);
-    private_nh_.param<bool>("enable_auto_offboard", enable_auto_offboard_, sim_enable_);
-    private_nh_.param<bool>("enable_auto_arm", enable_auto_arm_, sim_enable_);
+    private_nh_.param<bool>("enable_auto_offboard", enable_auto_offboard_, true);
+    private_nh_.param<bool>("enable_auto_arm", enable_auto_arm_, true);
     private_nh_.param<bool>("use_dynamic_reconfigure", use_dynamic_reconfigure_, false);
     private_nh_.param<int>("offboard_warmup_count", offboard_warmup_count_, 80);
     private_nh_.param<double>("request_interval", request_interval_, 1.0);

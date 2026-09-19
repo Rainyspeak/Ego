@@ -1,8 +1,8 @@
 #ifndef PLANNER_CTRL_SE3_HOF_HPP
 #define PLANNER_CTRL_SE3_HOF_HPP
 
-// 移植自 OpenDrone se3_hopf/include/se3_hopf/se3_hopf.hpp
-// SE3 几何控制器(基于 Hopf 纤维化姿态解算)，类/文件按本项目命名规范更名为 se3_hof
+
+// SE3 几何控制器(基于 Hopf 纤维化姿态解算)，
 
 #include <queue>
 #include <Eigen/Dense>
@@ -14,6 +14,7 @@
 // #define AIRSIM
 
 struct Odom_Data_t{
+
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 	Eigen::Vector3d p;
 	Eigen::Vector3d v;
@@ -173,6 +174,8 @@ private:
 	Eigen::Vector3d grav_vec_, last_err_p_, last_err_v_, last_err_a_, last_err_q_, last_err_w_;
 	std::queue<std::pair<ros::Time, double>> timed_thrust_;
 
+
+   //xyz 三轴解姿态
 	void computeFlatInput(Desired_State_t desired_state, Odom_Data_t &desired_odom){
 
 		desired_odom.p = desired_state.p;
@@ -198,7 +201,7 @@ private:
 		desired_odom.w(2) = desired_state.yaw_rate * xc.dot(xb) + yc.dot(zb) * desired_odom.w(1);
 		desired_odom.w(2) /= (yc.cross(zb)).norm();
 	}
-
+   //球体化解算姿态
 	void computeFlatInput_Hopf_Fibration(Desired_State_t desired_state, Odom_Data_t &desired_odom){
 		Eigen::Vector3d abc = desired_state.a.normalized();
 		double a = abc(0), b = abc(1), c = abc(2);
@@ -279,7 +282,7 @@ public:
 		Kp_p_ = kp_p;
 		Kp_v_ = kp_v;
 		Kp_a_ = kp_a;
-		Kp_q_ = kp_q;
+		Kp_q_ = kp_q; 
 		Kp_w_ = kp_w;
 		Kd_p_ = kd_p;
 		Kd_v_ = kd_v;
@@ -295,6 +298,8 @@ public:
 	}
 
 	bool calControl(Odom_Data_t odom_data, Imu_Data_t imu_data, Desired_State_t desired_state, Controller_Output_t &output){
+
+		//保险时间，杜绝过期的周期指令
 		if((ros::Time::now() - odom_data.rcv_stamp).toSec() > 0.1){
 			// std::cout << "odom not rcv" << std::endl;
 			return false;
@@ -305,8 +310,11 @@ public:
 		if(have_last_err_ == false)
 			last_err_p_ = err_p;
 		Eigen::Vector3d d_err_p = err_p - last_err_p_;
+
 		limitErr(d_err_p, -limit_d_err_p_, limit_d_err_p_);
 		desired_state.v = desired_state.v - Kp_p_.asDiagonal() * err_p - Kd_p_.asDiagonal() * d_err_p;
+
+
 		Eigen::Vector3d err_v = odom_data.v - desired_state.v;
 		limitErr(err_v, -limit_err_v_, limit_err_v_);
 		if(have_last_err_ == false)
@@ -314,10 +322,12 @@ public:
 		Eigen::Vector3d d_err_v = err_v - last_err_v_;
 		limitErr(d_err_v, -limit_d_err_v_, limit_d_err_v_);
 		desired_state.a = desired_state.a - Kp_v_.asDiagonal() * err_v - Kd_v_.asDiagonal() * d_err_v + grav_vec_;
+
 		// std::cout << "err_p: " << err_p.transpose() << std::endl;
 		// std::cout << "err_v: " << err_v.transpose() << std::endl;
 		// std::cout << "imu_data.a: " << imu_data.a.transpose() << std::endl;
 		// std::cout << "odom_data.v: " << odom_data.v.transpose() << std::endl;
+
 		Eigen::Vector3d a_world = odom_data.q.toRotationMatrix() * imu_data.a;
 		Eigen::Vector3d err_a = a_world - desired_state.a;
 		limitErr(err_a, -limit_err_a_, limit_err_a_);
@@ -331,12 +341,17 @@ public:
 		last_err_v_ = err_v;
 		last_err_a_ = err_a;
 
+
+
+		//解算推力，修正期望加速度
 		double thr = desired_state.a.transpose() * (odom_data.q * Eigen::Vector3d::UnitZ());
 		output.thrust = thr / T_a_;
 		// ROS_INFO_STREAM_THROTTLE(1.0, "T_a_: " << T_a_);
 		// std::cout << std::endl << "desired_state.a: " << desired_state.a.transpose() << std::endl;
 		// std::cout << "odom_v: " << odom_data.v.transpose() << std::endl;
 
+
+		//修补姿态位置源定位的偏差
 		Odom_Data_t desired_odom;
 		// computeFlatInput(desired_state, desired_odom);
 		computeFlatInput_Hopf_Fibration(desired_state, desired_odom);
@@ -344,8 +359,10 @@ public:
 
 		// printf("desired q: (%lf,%lf,%lf,%lf)\n", desired_odom.q.w(), desired_odom.q.x(), desired_odom.q.y(), desired_odom.q.z());
 		// std::cout << "desired q: " << desired_state.a.transpose() << std::endl;
-
+		
 		Eigen::Quaterniond err_q = odom_data.q.inverse() * desired_odom.q;
+
+		//前馈修正 加速度
 		Eigen::Vector3d err_br;
 		if (err_q.w() >= 0){
 			err_br.x() = Kp_q_(0) * err_q.x();
@@ -368,6 +385,7 @@ public:
 			output.bodyrates = q_mid * output.bodyrates;
 		}
 
+		//推送输出
 		timed_thrust_.push(std::pair<ros::Time, double>(ros::Time::now(), output.thrust));
 		while (timed_thrust_.size() > 100)
 			timed_thrust_.pop();
@@ -398,6 +416,8 @@ public:
 			/***********************************/
 			/* Model: est_a(2) = thr1acc_ * thr */
 			/***********************************/
+
+			//卡尔曼滤波检测
 			double gamma = 1 / (rho_ + thr * P_ * thr);
 			double K = gamma * P_ * thr;
 			T_a_ = T_a_ + K * (est_a(2) - thr * T_a_);
