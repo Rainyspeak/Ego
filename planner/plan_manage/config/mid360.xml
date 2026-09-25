@@ -62,7 +62,8 @@
     <param name="fsm/thresh_no_replan" value="2.0" type="double"/>
     <param name="fsm/planning_horizon" value="$(arg planning_horizon)" type="double"/>
     <param name="fsm/planning_horizen_time" value="3" type="double"/>
-    <param name="fsm/emergency_time_" value="1.0" type="double"/>
+
+    <param name="fsm/emergency_time_" value="0.75" type="double"/>
 
     <param name="fsm/waypoint_num" value="$(arg point_num)" type="int"/>
     <param name="fsm/waypoint0_x" value="$(arg point0_x)" type="double"/>
@@ -85,10 +86,10 @@
     <param name="grid_map/map_size_x" value="$(arg map_size_x_)"/>
     <param name="grid_map/map_size_y" value="$(arg map_size_y_)"/>
     <param name="grid_map/map_size_z" value="$(arg map_size_z_)"/>
-    <param name="grid_map/local_update_range_x" value="10"/>
-    <param name="grid_map/local_update_range_y" value="10"/>
-    <param name="grid_map/local_update_range_z" value="10"/>
-    <param name="grid_map/obstacles_inflation" value="0.30"/>
+    <param name="grid_map/local_update_range_x" value="8"/>
+    <param name="grid_map/local_update_range_y" value="8"/>
+    <param name="grid_map/local_update_range_z" value="8"/>
+    <param name="grid_map/obstacles_inflation" value="0.25"/>
     <param name="grid_map/local_map_margin" value="30"/>
     <param name="grid_map/ground_height" value="-0.01"/>
 
@@ -132,7 +133,7 @@
     <param name="optimization/lambda_fitness" value="1.2" type="double"/>
 
     <!-- 控制点离障碍的期望安全距离(软约束)。代码默认-1(无效)，必须在launch配置 -->
-    <param name="optimization/dist0" value="0.20" type="double"/>
+    <param name="optimization/dist0" value="0.25" type="double"/>
 
     <param name="optimization/max_vel" value="$(arg max_vel)" type="double"/>
     <param name="optimization/max_acc" value="$(arg max_acc)" type="double"/>

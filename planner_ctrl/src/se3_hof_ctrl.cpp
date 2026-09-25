@@ -28,6 +28,12 @@ Se3HofCtrl::Se3HofCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &private
     private_nh_.param<bool>("use_dynamic_reconfigure", use_dynamic_reconfigure_, false);
     private_nh_.param<int>("offboard_warmup_count", offboard_warmup_count_, 80);
     private_nh_.param<double>("request_interval", request_interval_, 1.0);
+    private_nh_.param<double>("msg_expire_time", msg_expire_time_, 0.01);
+    private_nh_.param<double>("planner_timeout", planner_timeout_, 0.5);
+    private_nh_.param<double>("planner_lost_land_time", planner_lost_land_time_, 0.0);
+    private_nh_.param<double>("imu_timeout", imu_timeout_, 0.5);
+    private_nh_.param<double>("odom_timeout", odom_timeout_, 0.5);
+    private_nh_.param<double>("odom_vel_threshold", odom_vel_threshold_, 3.0);
     private_nh_.param<bool>("auto_takeoff", auto_takeoff_, true);
     private_nh_.param<double>("takeoff_height", takeoff_height_, 2.0);
     private_nh_.param<double>("geo_fence/x", geo_fence_[0], 10.0);
@@ -46,11 +52,32 @@ Se3HofCtrl::Se3HofCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &private
     if (request_interval_ < 0.1) {
         request_interval_ = 0.1;
     }
+    if (msg_expire_time_ < 0.001) {
+        msg_expire_time_ = 0.001;
+    }
+    if (planner_timeout_ < 0.1) {
+        planner_timeout_ = 0.1;
+    }
+    if (imu_timeout_ < 0.1) {
+        imu_timeout_ = 0.1;
+    }
+    if (odom_timeout_ < 0.1) {
+        odom_timeout_ = 0.1;
+    }
     last_mode_request_ = ros::Time(0);
     last_arm_request_ = ros::Time(0);
+    last_land_request_ = ros::Time(0);
 
-    hover_percent_ = 0.25;
-    max_hover_percent_ = 0.75;
+    private_nh_.param<double>("hover_percent", hover_percent_, 0.25);
+    private_nh_.param<double>("max_hover_percent", max_hover_percent_, 0.75);
+    // 悬停油门用于初始化 T_a_ 推力归一化常数(=g/hover_percent)，稳态由 estimateTa 在线估计修正；
+    // 值域非法时回退默认，避免 T_a_ 初值发散
+    if (hover_percent_ <= 0.0 || hover_percent_ > 1.0) {
+        hover_percent_ = 0.25;
+    }
+    if (max_hover_percent_ > 1.0 || max_hover_percent_ < hover_percent_) {
+        max_hover_percent_ = 0.75;
+    }
 
     se3_hof_.init(hover_percent_, max_hover_percent_, enu_frame_, vel_in_body_);
     if (use_dynamic_reconfigure_) {
@@ -140,6 +167,48 @@ void Se3HofCtrl::execFSMCallback(const ros::TimerEvent &e){
         ROS_WARN_STREAM("State changed from " << state2string(prev_flightState_) << " to " << state2string(flightState_));
         prev_flightState_ = flightState_;
     }
+
+    // 规划器断流保护：收到过规划消息后，超过 planner_timeout 没有新消息，
+    // 冻结当前位置悬停（继续跟踪冻结的期望速度会沿旧方向过冲甚至飞走）
+    const ros::Time now = ros::Time::now();
+    if (planner_msg_received_ &&
+        (flightState_ == TAKEOFF || flightState_ == MISSION_EXECUTION) &&
+        (now - last_planner_msg_time_).toSec() > planner_timeout_) {
+        ROS_WARN_STREAM("se3_hof: planner stream lost for "
+                        << (now - last_planner_msg_time_).toSec() << " s, hold at current position.");
+        desired_state_.p = odom_data_.p;
+        desired_state_.v.setZero();
+        desired_state_.a.setZero();
+        desired_state_.j.setZero();
+        desired_state_.yaw = utils::fromQuaternion2yaw(odom_data_.q);
+        desired_state_.yaw_rate = 0.0;
+        desired_state_.q = planner_ctrl::planner_output::QuaternionFromYaw(desired_state_.yaw);
+        planner_lost_enter_time_ = now;
+        flightState_ = PLANNER_LOST;
+    }
+
+    // 传感器断流与定位合理性检测（超时阈值参照 px4ctrl 实机配置 msg_timeout=0.5s）：
+    // IMU/odom 断流或里程计数据异常时，机载侧状态估计已不可信，本机没有遥控兜底，直接紧急降落。
+    // 流"从未到达过"同样按断流处理，防止起飞阶段就带着死传感器上天
+    if (flightState_ == TAKEOFF || flightState_ == MISSION_EXECUTION || flightState_ == PLANNER_LOST) {
+        if (!imu_msg_received_ || (now - last_imu_msg_time_).toSec() > imu_timeout_) {
+            ROS_ERROR_STREAM("se3_hof: imu stream lost for "
+                             << (imu_msg_received_ ? (now - last_imu_msg_time_).toSec() : -1.0)
+                             << " s, emergency land.");
+            flightState_ = EMERGENCY;
+        } else if (!odom_msg_received_ || (now - last_odom_msg_time_).toSec() > odom_timeout_) {
+            ROS_ERROR_STREAM("se3_hof: odom stream lost for "
+                             << (odom_msg_received_ ? (now - last_odom_msg_time_).toSec() : -1.0)
+                             << " s, emergency land.");
+            flightState_ = EMERGENCY;
+        } else if (!odom_data_.p.allFinite() || !odom_data_.v.allFinite() ||
+                   odom_data_.v.norm() > odom_vel_threshold_) {
+            ROS_ERROR_STREAM("se3_hof: odom data fault (|v|=" << odom_data_.v.norm()
+                             << " m/s), localization may be wrong, emergency land.");
+            flightState_ = EMERGENCY;
+        }
+    }
+
     switch (flightState_)
     {
     case WAITING_FOR_CONNECTED:{
@@ -157,7 +226,6 @@ void Se3HofCtrl::execFSMCallback(const ros::TimerEvent &e){
         init_output.thrust = 0.6;
         send_cmd(init_output, true); // send a zero command to initialize the offboard mode
         ++offboard_warmup_counter_;
-        const ros::Time now = ros::Time::now();
         TrySetOffboard(now);
         TryArm(now);
         if(currState_.mode == "OFFBOARD" && currState_.armed){
@@ -197,13 +265,34 @@ void Se3HofCtrl::execFSMCallback(const ros::TimerEvent &e){
         }
         break;
     }
+    case PLANNER_LOST: {
+        ROS_INFO_ONCE("Planner stream lost, holding position...");
+        Controller_Output_t output;
+        if(se3_hof_.calControl(odom_data_, imu_data_, desired_state_, output)){
+            send_cmd(output, true);
+            se3_hof_.estimateTa(imu_data_.a);
+        }
+        if((now - last_planner_msg_time_).toSec() < planner_timeout_){
+            ROS_WARN("se3_hof: planner stream resumed, back to MISSION_EXECUTION.");
+            flightState_ = MISSION_EXECUTION;
+        } else if(planner_lost_land_time_ > 0.0 &&
+                  (now - planner_lost_enter_time_).toSec() > planner_lost_land_time_){
+            ROS_WARN_STREAM("se3_hof: planner lost over " << planner_lost_land_time_ << " s, landing.");
+            flightState_ = LANDING;
+        }
+        break;
+    }
     case LANDING: {
         landing_locked_ = true;
-        mavros_msgs::SetMode land_set_mode;
-        land_set_mode.request.custom_mode = "AUTO.LAND";
-        if(set_mode_client_.call(land_set_mode) && land_set_mode.response.mode_sent){
-            flightState_ = LANDED;
-            ROS_INFO("land enabled");
+        // 限频请求，避免 100Hz 阻塞式服务调用卡住单线程 spinner（进而拖停全部回调）
+        if ((now - last_land_request_).toSec() >= request_interval_) {
+            last_land_request_ = now;
+            mavros_msgs::SetMode land_set_mode;
+            land_set_mode.request.custom_mode = "AUTO.LAND";
+            if(set_mode_client_.call(land_set_mode) && land_set_mode.response.mode_sent){
+                flightState_ = LANDED;
+                ROS_INFO("land enabled");
+            }
         }
         // ros::spinOnce();
         break;
@@ -263,7 +352,28 @@ bool Se3HofCtrl::landCallback(std_srvs::SetBool::Request &request, std_srvs::Set
     return true;
 }
 
+bool Se3HofCtrl::msgExpired(const ros::Time &stamp, const std::string &what) {
+    if (stamp.isZero()) {
+        // 无时间戳无法判定新旧，放行并提示（打戳是上游的义务）
+        ROS_WARN_STREAM_THROTTLE(5.0, "se3_hof: " << what << " msg has no stamp, skip expiry check.");
+        return false;
+    }
+    const double age = (ros::Time::now() - stamp).toSec();
+    if (age > msg_expire_time_) {
+        ROS_WARN_STREAM_THROTTLE(1.0, "se3_hof: drop expired " << what
+                               << " msg, age " << age * 1000.0
+                               << " ms > " << msg_expire_time_ * 1000.0 << " ms.");
+        return true;
+    }
+    return false;
+}
+
 void Se3HofCtrl::OdomCallback(const nav_msgs::Odometry::ConstPtr &msg){
+    if (msgExpired(msg->header.stamp, "odom")) {
+        return;
+    }
+    last_odom_msg_time_ = ros::Time::now();
+    odom_msg_received_ = true;
     odom_data_.feed(msg, enu_frame_, vel_in_body_);
     bool judge_x = ((odom_data_.p(0) >= geo_fence_[0]) || (odom_data_.p(0) <= -geo_fence_[0]));
     bool judge_y = ((odom_data_.p(1) >= geo_fence_[1]) || (odom_data_.p(1) <= -geo_fence_[1]));
@@ -275,12 +385,17 @@ void Se3HofCtrl::OdomCallback(const nav_msgs::Odometry::ConstPtr &msg){
 }
 
 void Se3HofCtrl::IMUCallback(const sensor_msgs::Imu::ConstPtr &msg){
+    if (msgExpired(msg->header.stamp, "imu")) {
+        return;
+    }
+    last_imu_msg_time_ = ros::Time::now();
+    imu_msg_received_ = true;
     imu_data_.feed(msg, enu_frame_);
 }
 
 void Se3HofCtrl::StateCallback(const mavros_msgs::State::ConstPtr &msg){
     currState_ = *msg;
-    if (flightState_ == MISSION_EXECUTION && !currState_.armed) {
+    if ((flightState_ == MISSION_EXECUTION || flightState_ == PLANNER_LOST) && !currState_.armed) {
         flightState_ = EMERGENCY;
         landing_locked_ = true;
         ROS_ERROR("se3_hof: unexpected disarm during mission.");
@@ -342,10 +457,15 @@ void Se3HofCtrl::TryArm(const ros::Time &now) {
 
 void Se3HofCtrl::plannerOutputCallback(const planner_ctrl::PlannerOutput::ConstPtr &msg)
 {
+    if (msgExpired(msg->header.stamp, "planner_output")) {
+        return;
+    }
     if (msg->points.empty()) {
         ROS_WARN("Received empty planner output message");
         return;
     }
+    last_planner_msg_time_ = ros::Time::now();
+    planner_msg_received_ = true;
     const planner_ctrl::PlannerOutputPoint &pt = msg->points[0];
 
     desired_state_.p = planner_ctrl::planner_output::SelectPosition(pt, desired_state_.p);

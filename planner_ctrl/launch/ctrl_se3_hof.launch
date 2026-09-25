@@ -1,15 +1,13 @@
 <launch>
- 
-  <arg name="takeoff_height" default="2.0"/>
+  <arg name="takeoff_height" default="1.0"/>
   <arg name="geo_fence_x" default="50.0"/>
   <arg name="geo_fence_y" default="50.0"/>
   <arg name="geo_fence_z" default="6.0"/>
-
-  
   <arg name="planner_cmd_topic" default="/planner_cmd"/>
   <arg name="planner_output_topic" default="/planner/output"/>
   <arg name="use_dynamic_reconfigure" default="false"/>
-
+  <!-- 悬停油门：4S 约 0.25，6S 约 0.17 -->
+  <arg name="hover_percent" default="0.25"/>
 
   <node pkg="planner_ctrl" name="planner_adapter" type="planner_adapter.py" output="screen">
     <param name="adapter_type" value="position_command"/>
@@ -25,5 +23,6 @@
     <param name="geo_fence/y" value="$(arg geo_fence_y)"/>
     <param name="geo_fence/z" value="$(arg geo_fence_z)"/>
     <param name="use_dynamic_reconfigure" value="$(arg use_dynamic_reconfigure)"/>
+    <param name="hover_percent" value="$(arg hover_percent)"/>
   </node>
 </launch>

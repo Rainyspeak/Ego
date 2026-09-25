@@ -55,6 +55,20 @@ private:
     double request_interval_{1.0};
     ros::Time last_mode_request_;
     ros::Time last_arm_request_;
+    double msg_expire_time_{0.01};
+    ros::Time last_planner_msg_time_;
+    bool planner_msg_received_{false};
+    double planner_timeout_{0.5};
+    double planner_lost_land_time_{0.0};
+    ros::Time planner_lost_enter_time_;
+    ros::Time last_imu_msg_time_;
+    ros::Time last_odom_msg_time_;
+    bool imu_msg_received_{false};
+    bool odom_msg_received_{false};
+    double imu_timeout_{0.5};
+    double odom_timeout_{0.5};
+    double odom_vel_threshold_{3.0};
+    ros::Time last_land_request_;
     double takeoff_height_;
     Eigen::Vector3d init_pose_, geo_fence_;;
 
@@ -66,7 +80,7 @@ private:
     dynamic_reconfigure::Server<planner_ctrl::se3_hof_tuneConfig> dynamic_tune_server_;
     dynamic_reconfigure::Server<planner_ctrl::se3_hof_tuneConfig>::CallbackType dynamic_tune_cb_type_;
 
-    enum FlightState { WAITING_FOR_CONNECTED, WAITING_FOR_OFFBOARD, TAKEOFF, MISSION_EXECUTION, LANDING, LANDED, EMERGENCY } flightState_, prev_flightState_;
+    enum FlightState { WAITING_FOR_CONNECTED, WAITING_FOR_OFFBOARD, TAKEOFF, MISSION_EXECUTION, LANDING, LANDED, EMERGENCY, PLANNER_LOST } flightState_, prev_flightState_;
 
     std::string state2string(FlightState state) {
         switch (state) {
@@ -84,6 +98,8 @@ private:
             return "TAKEOFF";
         case EMERGENCY:
             return "EMERGENCY";
+        case PLANNER_LOST:
+            return "PLANNER_LOST";
         default:
             return "UNKNOWN_STATE";
         }
@@ -99,6 +115,7 @@ private:
     void IMUCallback(const sensor_msgs::Imu::ConstPtr &msg);
     void StateCallback(const mavros_msgs::State::ConstPtr &msg);
     void plannerOutputCallback(const planner_ctrl::PlannerOutput::ConstPtr &msg);
+    bool msgExpired(const ros::Time &stamp, const std::string &what);
     void TrySetOffboard(const ros::Time &now);
     void TryArm(const ros::Time &now);
     void applyTuneConfig(const planner_ctrl::se3_hof_tuneConfig &config);

@@ -9,7 +9,7 @@
 #include <mavros_msgs/State.h>
 #include <mavros_msgs/PositionTarget.h>
 #include "quadrotor_msgs/PositionCommand.h"
-#include<nav_msgs/Odometry.h>
+#include <nav_msgs/Odometry.h>
 #include <tf/transform_datatypes.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
@@ -22,7 +22,7 @@
 
 unsigned short position_mask = POSITION_CONTROL;
 
-float takeoff_height = 1.5f; //全局起飞高度（米）
+float takeoff_height = 1.1f; //全局起飞高度（米）
 mavros_msgs::PositionTarget current_goal;
 nav_msgs::Odometry position_msg;
 //geometry_msgs::PoseStamped target_pos;
@@ -35,10 +35,12 @@ float position_x, position_y, position_z, current_yaw, targetpos_x, targetpos_y;
 float current_vel_x, current_vel_y, current_vel_z;
 // bool target_received = false;
 // bool waypoint_hold = false;
-float hold_position_x, hold_position_y, hold_position_z, hold_yaw;
 bool odom_received = false;
 float ego_pos_x, ego_pos_y, ego_pos_z, ego_vel_x, ego_vel_y, ego_vel_z, ego_a_x, ego_a_y, ego_a_z, ego_yaw, ego_yaw_rate; //EGO planner information has position velocity acceleration yaw yaw_dot
 bool receive = false;//触发轨迹的条件判断
+bool planner_timed_out = false;//规划器超时后原地悬停，等它重新规划
+constexpr double kPlannerTimeout = 0.05; // 50 ms 内未收到新指令即过期
+ros::SteadyTime last_planner_receive_time;
 float pi = 3.14159265;
 
 // Velocity-loop PID parameters are loaded from the node's private namespace.
@@ -55,7 +57,7 @@ double position_error_limit = planner_ctrl::PidParam::kPositionErrorLimit;
 
 struct Speed_limit
 {
-  static constexpr double kControlRate = 50.0;
+  static constexpr double kControlRate = 50.0; // 每 20 ms 检查
   static constexpr double kSpeedLimit = 1.5;
 
   static void limitVelocityNorm(double &vx, double &vy, double &vz, double max_speed)
@@ -222,8 +224,9 @@ mavros_msgs::PositionTarget pose(const double& x, const double& y, const double&
 quadrotor_msgs::PositionCommand ego;
 void twist_planner_cb(const quadrotor_msgs::PositionCommand::ConstPtr& msg)//ego的回调函数
 {
-
+    last_planner_receive_time = ros::SteadyTime::now();
     receive = true;
+    planner_timed_out = false;
 	  ego = *msg;
     ego_pos_x = ego.position.x;
     ego_pos_y = ego.position.y;
@@ -270,25 +273,6 @@ void twist_planner_cb(const quadrotor_msgs::PositionCommand::ConstPtr& msg)//ego
 //   return false;
 // }
 
-void Position_Hold()
-{
-  current_goal.coordinate_frame = mavros_msgs::PositionTarget::FRAME_LOCAL_NED;
-  current_goal.header.stamp = ros::Time::now();
-  current_goal.type_mask = position_mask;
-  current_goal.position.x = hold_position_x;
-  current_goal.position.y = hold_position_y;
-  current_goal.position.z = hold_position_z;
-  current_goal.yaw = hold_yaw;
-
-  current_goal.velocity.x = 0.0;
-  current_goal.velocity.y = 0.0;
-  current_goal.velocity.z = 0.0;
-  current_goal.yaw_rate = 0.0;
-
-  ROS_INFO_THROTTLE(2.0, "hold on：(%.2f, %.2f, %.2f)",
-                    hold_position_x, hold_position_y, hold_position_z);
-}
-
 void take_off(ros::Publisher &local_pos_pub,ros::ServiceClient &set_mode_client,ros::ServiceClient &arming_client,ros::Rate &rate)
 {
   mavros_msgs::SetMode offb_set_mode;
@@ -297,18 +281,10 @@ void take_off(ros::Publisher &local_pos_pub,ros::ServiceClient &set_mode_client,
   mavros_msgs::CommandBool arm_cmd;
   arm_cmd.request.value = true;
 
-  // 先发送一段起飞位置 setpoint，再请求 OFFBOARD。
-  for (int i = 0; ros::ok() && i < 50; i++)
-  {
-
-    local_pos_pub.publish(pose(0,0,takeoff_height,0));
-    ros::spinOnce();
-    rate.sleep(); 
-  }
-
+  // 单循环依次完成：切入 OFFBOARD → 解锁 → 爬升到起飞高度。
+  // setpoint 从第一帧就在发送，OFFBOARD 请求被拒会自动重试，无需单独预发送阶段。
   while (ros::ok())
   {
-
     local_pos_pub.publish(pose(0,0,takeoff_height,0));
 
     if (current_state.mode != "OFFBOARD")
@@ -325,18 +301,9 @@ void take_off(ros::Publisher &local_pos_pub,ros::ServiceClient &set_mode_client,
         ROS_INFO("arm success, take off");
       }
     }
-    else if (position_z <= takeoff_height - 0.2f)
+    else if (position_z > takeoff_height - 0.2f)
     {
-      ROS_INFO_THROTTLE(1.0, "Take off... z=%.2f", position_z);
-    }
-    else
-    {
-      hold_position_x = position_x;
-      hold_position_y = position_y;
-      hold_position_z = takeoff_height;
-      hold_yaw = current_yaw;
-      //waypoint_hold = true;
-      ROS_INFO("Takeoff complete, z=%.2f", position_z);
+      ROS_INFO("Takeoff complete, hover at (0, 0, %.2f), waiting for planner", takeoff_height);
       return;
     }
 
@@ -437,7 +404,7 @@ int main(int argc, char **argv)
 	("/mavros/set_mode");//设置飞机飞行模式的服务端
 	
 	ros::Subscriber twist_sub = nh.subscribe<quadrotor_msgs::PositionCommand>
-	("/planner_cmd", 10, twist_planner_cb);
+	("/planner_cmd", 1, twist_planner_cb, ros::TransportHints().tcpNoDelay());
   // ros::Subscriber target_sub = nh.subscribe<geometry_msgs::PoseStamped>
 	// ("move_base_simple/goal", 10, target_cb);
 
@@ -445,15 +412,32 @@ int main(int argc, char **argv)
   // ("/vins_fusion/odometry",10, position_cb);
 
   ros::Subscriber position_sub=nh.subscribe<nav_msgs::Odometry>
-  ("/mavros/local_position/odom",10, position_cb);
+  ("/Odometry",10, position_cb);
 
-	ros::Rate rate(Speed_limit::kControlRate);
+	ros::Rate takeoff_rate(Speed_limit::kControlRate);
    
 	
-	take_off(local_pos_pub, set_mode_client, arming_client, rate);
+	take_off(local_pos_pub, set_mode_client, arming_client, takeoff_rate);
+  // 使用实际时间调度
+  ros::WallRate rate(Speed_limit::kControlRate);
 
 	while(ros::ok())
 	{
+    // 先接收最新指令，再判断有效期，避免多使用上一周期的速度。
+    ros::spinOnce();
+    if (receive &&
+        (ros::SteadyTime::now() - last_planner_receive_time).toSec() >= kPlannerTimeout)
+    {
+      receive = false;
+      // 超时瞬间锁定当前位置，原地悬停等规划器重新规划
+      if (odom_received)
+      {
+        planner_timed_out = true;
+        current_goal = pose(position_x, position_y, position_z, current_yaw);
+      }
+      ROS_WARN("Planner command timeout (%.0f ms), holding position, waiting for re-plan",
+               kPlannerTimeout * 1000.0);
+    }
 		// if(receive && odom_received)
 		// {
 		// 	if(Arrival_State())
@@ -477,20 +461,14 @@ int main(int argc, char **argv)
 
     else
     {
-      ROS_WARN_THROTTLE(1.0, "Waiting for ego planner");
-      if (odom_received)
-      {
-        hold_position_x = position_x;
-        hold_position_y = position_y;
-        hold_position_z = position_z;
-        hold_yaw = current_yaw;
-      }
-      Position_Hold();
+      // 起飞后等待：悬停在 (0, 0) 上方；规划器超时：保持锁定的原地悬停点
+      if (!planner_timed_out)
+        current_goal = pose(0, 0, takeoff_height, 0);
       velocity_pid.reset();
     }
 
+    current_goal.header.stamp = ros::Time::now();
 		local_pos_pub.publish(current_goal);
-		ros::spinOnce();
 		rate.sleep();
 	}
 
