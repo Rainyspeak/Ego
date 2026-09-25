@@ -1,4 +1,4 @@
-// 移植自 OpenDrone(Tfly6, Gen3) se3_hopf/src/se3_hopf_node.cpp
+
 #include "planner_ctrl/se3_hof_ctrl.h"
 
 int main(int argc, char **argv){
