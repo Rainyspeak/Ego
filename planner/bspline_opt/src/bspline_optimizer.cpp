@@ -1063,7 +1063,7 @@ namespace ego_planner
         lambda4_ *= 2;
 
       iter_count++;
-    } while (!flag_safe && iter_count <= 0);
+    } while (!flag_safe && iter_count <= 3); // "iter_count <= 0" made the lambda4 doubling retry dead code
 
     lambda4_ = origin_lambda4;
 

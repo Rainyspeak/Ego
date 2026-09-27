@@ -3,15 +3,19 @@
   <arg name="map_size_y_"/>
   <arg name="map_size_z_"/>
 
-  <arg name="odometry_topic" default="/Odometry"/>
-  <arg name="cloud_topic" default="/cloud_registered"/>
-  <arg name="processed_cloud_topic" default="/cloud_ego_registered"/>
-  <arg name="cloud_frame" default="camera_init"/>
+<!-- FAST-LIO 里程计与配准点云(实飞链路) -->
+<arg name="odometry_topic" default="/Odometry"/>
+<arg name="cloud_topic" default="/cloud_registered"/>
+<arg name="processed_cloud_topic" default="/cloud_ego_registered"/>
+<arg name="cloud_frame" default="camera_init"/>
 
-  <arg name="crop_half_x" default="0.3"/>
-  <arg name="crop_half_y" default="0.3"/>
-  <arg name="crop_half_z" default="0.2"/>
-  <arg name="voxel_leaf_size" default="0.15"/>
+<!-- 机身自打点裁剪盒(以机体为中心的半边长,m)：crop_preprocess 在配准云进 grid_map
+     之前裁掉打在机臂/机身上的点；缩太小会放进自打点形成幻影障碍 -->
+<arg name="crop_half_x" default="0.3"/>
+<arg name="crop_half_y" default="0.3"/>
+<arg name="crop_half_z" default="0.2"/>
+<!-- 体素降采样叶大小(m) -->
+<arg name="voxel_leaf_size" default="0.15"/>
 
   <arg name="max_vel"/>
   <arg name="max_acc"/>
@@ -56,14 +60,20 @@
     
 
     <!-- planning fsm -->
+    <!-- flight_type: 1=RViz 手动目标(window_detector 的 goal 也发到 /move_base_simple/goal 走这条)，2=预设航点序列 -->
     <param name="fsm/flight_type" value="$(arg flight_type)" type="int"/>
     <param name="fsm/preset_wait_for_trigger" value="$(arg preset_wait_for_trigger)" type="bool"/>
+    <!-- 距上次轨迹起点 < 该值(m) 不重规划，防原地反复重规划 -->
     <param name="fsm/thresh_replan" value="1.5" type="double"/>
+    <!-- 距目标终点 < 该值(m) 停止重规划，让当前轨迹执行完 -->
     <param name="fsm/thresh_no_replan" value="2.0" type="double"/>
+    <!-- 航点约束距离(m)：局部轨迹只向前优化到该距离 -->
     <param name="fsm/planning_horizon" value="$(arg planning_horizon)" type="double"/>
+    <!-- 单段轨迹的规划时长(s)，影响初始路径的时间分配 -->
     <param name="fsm/planning_horizen_time" value="3" type="double"/>
 
-    <param name="fsm/emergency_time_" value="0.75" type="double"/>
+    <!-- 剩余轨迹时间 < 该值(s) 且碰撞时触发 EMERGENCY 立即刹停 -->
+    <param name="fsm/emergency_time_" value="0.3" type="double"/>
 
     <param name="fsm/waypoint_num" value="$(arg point_num)" type="int"/>
     <param name="fsm/waypoint0_x" value="$(arg point0_x)" type="double"/>
@@ -82,15 +92,26 @@
     <param name="fsm/waypoint4_y" value="$(arg point4_y)" type="double"/>
     <param name="fsm/waypoint4_z" value="$(arg point4_z)" type="double"/>
 
+    <!-- ============ grid_map 建图 ============ -->
+    <!-- 栅格分辨率(m)：占据/膨胀/搜索的最小空间粒度 -->
     <param name="grid_map/resolution" value="0.05"/>
+    <!-- 全局静态地图盒(m)：xy 以原点为中心 ±size/2，z 从 ground_height 到 +size。
+         只决定内存与规划边界；实际建图范围由 local_update_range 决定 -->
     <param name="grid_map/map_size_x" value="$(arg map_size_x_)"/>
     <param name="grid_map/map_size_y" value="$(arg map_size_y_)"/>
     <param name="grid_map/map_size_z" value="$(arg map_size_z_)"/>
+    <!-- 局部滚动窗(m)：每帧只保留以机体为中心、该尺寸盒子内的占据。
+         实飞 8/8/8，需 ≤ mid360 有效感知范围 -->
     <param name="grid_map/local_update_range_x" value="8"/>
     <param name="grid_map/local_update_range_y" value="8"/>
     <param name="grid_map/local_update_range_z" value="8"/>
+    <!-- 障碍硬膨胀(m)：参与碰撞判定与 A* 搜索。
+         净安全距离 ≈ obstacles_inflation + optimization/dist0；
+         过大会封死窗洞(孔径 2.05 m)并诱发局部目标困死，优先调 dist0 -->
     <param name="grid_map/obstacles_inflation" value="0.25"/>
+    <!-- 可视化/清窗外扩格数(格) -->
     <param name="grid_map/local_map_margin" value="30"/>
+    <!-- 地面高度(m)：低于此 z 的点当地面处理；也是全局盒 z 下边界 -->
     <param name="grid_map/ground_height" value="-0.01"/>
 
     <!-- <param name="grid_map/cx" value="$(arg cx)"/> -->
@@ -98,7 +119,9 @@
     <!-- <param name="grid_map/fx" value="$(arg fx)"/> -->
     <!-- <param name="grid_map/fy" value="$(arg fy)"/> -->
 
+    <!-- 深度图滤波(仅深度相机模式用)：LiDAR 点云链路 use_depth_filter=false 全部不生效 -->
     <param name="grid_map/use_depth_filter" value="false"/>
+
     <param name="grid_map/depth_filter_tolerance" value="0.15"/>
     <param name="grid_map/depth_filter_maxdist" value="5.0"/>
     <param name="grid_map/depth_filter_mindist" value="0.2"/>
@@ -106,38 +129,55 @@
     <param name="grid_map/k_depth_scaling_factor" value="1000.0"/>
     <param name="grid_map/skip_pixel" value="2"/>
 
+    <!--占据概率(对数几率)：p_hit/p_miss 单次观测命中/穿过的置信度，p_occ 判定为占据的阈值，p_min/p_max 钳位上下限。一般不动 -->
     <param name="grid_map/p_hit" value="0.65"/>
     <param name="grid_map/p_miss" value="0.35"/>
     <param name="grid_map/p_min" value="0.12"/>
     <param name="grid_map/p_max" value="0.90"/>
     <param name="grid_map/p_occ" value="0.80"/>
+    <!-- 光线投射范围(m)：命中点外 min~max 之间的格子被"穿过"清除。
+         max_ray_length 过大会清掉真实障碍后的影子区，过小留下幻影占据 -->
     <param name="grid_map/min_ray_length" value="0.1"/>
     <param name="grid_map/max_ray_length" value="4.5"/>
 
+    <!-- 虚拟天花板(m)：在该高度整层写入占据参与规划(限高)，不只是显示！
+         ⚠ 当前 2.5 < 环顶 3.08：穿真实窗框时天花板平面会切进环孔上半部、封死 z>2.5 的路径，
+         穿框任务前需抬高到 ≥ 最高障碍顶+膨胀(环顶 3.08+0.25=3.33，建议 ≥3.5) -->
     <param name="grid_map/virtual_ceil_height" value="2.5"/>
+    <!-- 显示截断高度(m)：仅影响 /grid_map/occupancy 等话题发布，规划不受影响。
+         ⚠ 当前 2.4 < 环顶 3.08，RViz 里环顶弧不显示(易误判"上方点云无法检测")，建议 ≥3.6 -->
     <param name="grid_map/visualization_truncate_height" value="2.4"/>
     <param name="grid_map/show_occ_time" value="false"/>
+    <!-- 位姿来源：1=POSE_STAMPED(深度图+相机位姿话题)，2=ODOMETRY(里程计话题) -->
     <param name="grid_map/pose_type" value="2"/>
+    <!-- 建图坐标系：须与输入点云的 frame 一致(实飞 FAST-LIO 输出 camera_init) -->
     <param name="grid_map/frame_id" value="$(arg cloud_frame)"/>
 
+    <!-- ============ 轨迹与优化 ============ -->
+    <!-- 机体动力学上限：优化与可行性检查用，由上层 launch 传入 -->
     <param name="manager/max_vel" value="$(arg max_vel)" type="double"/>
     <param name="manager/max_acc" value="$(arg max_acc)" type="double"/>
     <param name="manager/max_jerk" value="4" type="double"/>
+    <!-- B 样条控制点间距(m)：影响轨迹粒度与优化耗时 -->
     <param name="manager/control_points_distance" value="0.4" type="double"/>
+    <!-- 可行性容差：速度/加速度超限判定比例，过小会频繁重规划 -->
     <param name="manager/feasibility_tolerance" value="0.05" type="double"/>
     <param name="manager/planning_horizon" value="$(arg planning_horizon)" type="double"/>
 
+    <!-- 优化目标权重：平滑/碰撞/动力学可行性/末端贴合。调 lambda_collision 增强避障 -->
     <param name="optimization/lambda_smooth" value="0.8" type="double"/>
     <param name="optimization/lambda_collision" value="0.4" type="double"/>
     <param name="optimization/lambda_feasibility" value="0.1" type="double"/>
     <param name="optimization/lambda_fitness" value="1.2" type="double"/>
 
-    <!-- 控制点离障碍的期望安全距离(软约束)。代码默认-1(无效)，必须在launch配置 -->
+    <!-- 控制点离障碍的期望安全距离(软约束)。代码默认-1(无效)，必须在launch配置。
+         净安全距离 ≈ obstacles_inflation(硬) + dist0(软)，想加大间距优先调这里 -->
     <param name="optimization/dist0" value="0.25" type="double"/>
 
     <param name="optimization/max_vel" value="$(arg max_vel)" type="double"/>
     <param name="optimization/max_acc" value="$(arg max_acc)" type="double"/>
 
+    <!-- traj_server 输出指令限幅：limit_ratio 为超限回缩比例 -->
     <param name="bspline/limit_vel" value="$(arg max_vel)" type="double"/>
     <param name="bspline/limit_acc" value="$(arg max_acc)" type="double"/>
     <param name="bspline/limit_ratio" value="1.1" type="double"/>

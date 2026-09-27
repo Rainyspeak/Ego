@@ -46,6 +46,9 @@ private:
     bool arm_triggered_{false};
     bool offboard_triggered_{false};
     bool auto_takeoff_{false};
+    // 起爬到位标志：TAKEOFF 完成(|z-takeoff_height|<0.1)置 true，plannerOutputCallback
+    // 在此之前丢弃规划器航点；WAITING_FOR_OFFBOARD→TAKEOFF 复位
+    bool takeoff_reached_{false};
     bool use_dynamic_reconfigure_{false};
     bool landing_locked_{false};
     bool enable_auto_offboard_{false};
@@ -68,6 +71,7 @@ private:
     double imu_timeout_{0.5};
     double odom_timeout_{0.5};
     double odom_vel_threshold_{3.0};
+    string odom_topic_;  // 里程计来源（参数 odom_topic，默认 mavros；实机 fastlio /Odometry）
     ros::Time last_land_request_;
     double takeoff_height_;
     Eigen::Vector3d init_pose_, geo_fence_;;

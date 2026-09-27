@@ -1,29 +1,17 @@
 cmake_minimum_required(VERSION 3.0.2)
-project(planner_ctrl)
+project(path_manager)
 
-## Binary PositionTarget masks and the controller implementation require C++14.
-add_compile_options(-std=c++14)
+## Compile as C++11, supported in ROS Kinetic and newer
+# add_compile_options(-std=c++11)
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
-  mavros_msgs
-  message_generation
   nav_msgs
-  quadrotor_msgs
   roscpp
-  rospy
-  sensor_msgs
   std_msgs
-  std_srvs
-  dynamic_reconfigure
-  tf2
-  tf2_geometry_msgs
-  tf2_ros
-  trajectory_msgs
-  visualization_msgs
 )
 
 ## System dependencies are found with CMake's conventions
@@ -60,11 +48,11 @@ find_package(catkin REQUIRED COMPONENTS
 ##   * add every package in MSG_DEP_SET to generate_messages(DEPENDENCIES ...)
 
 ## Generate messages in the 'msg' folder
-add_message_files(
-  FILES
-  PlannerOutput.msg
-  PlannerOutputPoint.msg
-)
+# add_message_files(
+#   FILES
+#   Message1.msg
+#   Message2.msg
+# )
 
 ## Generate services in the 'srv' folder
 # add_service_files(
@@ -81,11 +69,10 @@ add_message_files(
 # )
 
 ## Generate added messages and services with any dependencies listed here
-generate_messages(
-  DEPENDENCIES
-  std_msgs
-  geometry_msgs
-)
+# generate_messages(
+#   DEPENDENCIES
+#   nav_msgs
+# )
 
 ################################################
 ## Declare ROS dynamic reconfigure parameters ##
@@ -102,9 +89,10 @@ generate_messages(
 ##     and list every .cfg file to be processed
 
 ## Generate dynamic reconfigure parameters in the 'cfg' folder
-generate_dynamic_reconfigure_options(
-  cfg/se3_hof_tune.cfg
-)
+# generate_dynamic_reconfigure_options(
+#   cfg/DynReconf1.cfg
+#   cfg/DynReconf2.cfg
+# )
 
 ###################################
 ## catkin specific configuration ##
@@ -117,8 +105,8 @@ generate_dynamic_reconfigure_options(
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
 #  INCLUDE_DIRS include
-#  LIBRARIES planner_ctrl
-  CATKIN_DEPENDS message_runtime
+#  LIBRARIES path_manager
+#  CATKIN_DEPENDS nav_msgs roscpp rospy
 #  DEPENDS system_lib
 )
 
@@ -135,7 +123,7 @@ include_directories(
 
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
-#   src/${PROJECT_NAME}/planner_ctrl.cpp
+#   src/${PROJECT_NAME}/path_manager.cpp
 # )
 
 ## Add cmake target dependencies of the library
@@ -144,15 +132,11 @@ include_directories(
 # add_dependencies(${PROJECT_NAME} ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Declare a C++ executable
-## With catkin_make all packages are built within a single CMake context
-## The recommended prefix ensures that target names across packages don't collide
-add_executable(ctrl_v1 src/ctrl_v1.cpp)
-add_executable(ctrl_ego_waypoints src/ctrl_ego_waypoints.cpp)
-add_executable(se3_hof src/se3_hof_node.cpp src/se3_hof_ctrl.cpp)
 
-add_dependencies(ctrl_v1 ${catkin_EXPORTED_TARGETS})
-add_dependencies(ctrl_ego_waypoints ${catkin_EXPORTED_TARGETS})
-add_dependencies(se3_hof ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+add_executable(path_ctrl src/path_ctrl_node.cpp src/path_manager.cpp)
+target_link_libraries(path_ctrl
+  ${catkin_LIBRARIES}
+)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -162,20 +146,12 @@ add_dependencies(se3_hof ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_T
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above
-##add_dependencies(${PROJECT_NAME}_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+# add_dependencies(${PROJECT_NAME}_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Specify libraries to link a library or executable target against
- target_link_libraries(ctrl_v1
-   ${catkin_LIBRARIES}
-)
-
-target_link_libraries(ctrl_ego_waypoints
-  ${catkin_LIBRARIES}
-)
-
-target_link_libraries(se3_hof
-  ${catkin_LIBRARIES}
-)
+# target_link_libraries(${PROJECT_NAME}_node
+#   ${catkin_LIBRARIES}
+# )
 
 #############
 ## Install ##
@@ -186,17 +162,15 @@ target_link_libraries(se3_hof
 
 ## Mark executable scripts (Python etc.) for installation
 ## in contrast to setup.py, you can choose the destination
-catkin_install_python(PROGRAMS
-  scripts/planner_adapter.py
-  scripts/mission_state.py
-  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-)
+# catkin_install_python(PROGRAMS
+#   scripts/my_python_script
+#   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+# )
 
 ## Mark executables for installation
-## See http://docs.ros.org/melodic/api/catkin/html/howto/format1/building_executables.html
-# install(TARGETS ${PROJECT_NAME}_node
-#   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-# )
+install(TARGETS path_ctrl
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
 
 ## Mark libraries for installation
 ## See http://docs.ros.org/melodic/api/catkin/html/howto/format1/building_libraries.html
@@ -225,7 +199,7 @@ catkin_install_python(PROGRAMS
 #############
 
 ## Add gtest based cpp test target and link libraries
-# catkin_add_gtest(${PROJECT_NAME}-test test/test_planner_ctrl.cpp)
+# catkin_add_gtest(${PROJECT_NAME}-test test/test_path_manager.cpp)
 # if(TARGET ${PROJECT_NAME}-test)
 #   target_link_libraries(${PROJECT_NAME}-test ${PROJECT_NAME})
 # endif()

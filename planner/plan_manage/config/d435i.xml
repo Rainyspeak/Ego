@@ -55,7 +55,8 @@
     <param name="fsm/thresh_no_replan" value="1.0" type="double"/>
     <param name="fsm/planning_horizon" value="$(arg planning_horizon)" type="double"/> <!--always set to 1.5 times grater than sensing horizen-->
     <param name="fsm/planning_horizen_time" value="3" type="double"/>
-    <param name="fsm/emergency_time_" value="1.0" type="double"/>
+    <!-- 碰撞点剩余时间 < 该值且重规划连续失败时才 EMERGENCY 刹停；过大导致"冲-停-冲-停"横跳 -->
+    <param name="fsm/emergency_time_" value="0.3" type="double"/>
     <param name="fsm/realworld_experiment" value="true"/>
     <param name="fsm/fail_safe" value="true"/>
 
@@ -128,9 +129,10 @@
     <param name="optimization/lambda_collision" value="0.5" type="double"/>
     <param name="optimization/lambda_feasibility" value="0.1" type="double"/>
     <param name="optimization/lambda_fitness" value="1.0" type="double"/>
-    <!-- 控制点离障碍的期望安全距离(软约束)。d435i点云较稀用大值0.5 -->
+    <!-- 控制点离障碍的期望安全距离(软约束)。0.5时净空需≈1.5m，窄通道内
+         碰撞代价把轨迹往两侧轮流推(左右横跳)+稀点云占据闪烁，降回0.3(净空≈1.1m) -->
     <!-- 代码默认-1(无效)，必须在launch配置 -->
-    <param name="optimization/dist0" value="0.5" type="double"/>
+    <param name="optimization/dist0" value="0.3" type="double"/>
 
     <param name="optimization/swarm_clearance" value="0.5" type="double"/>
     <param name="optimization/max_vel" value="$(arg max_vel)" type="double"/>

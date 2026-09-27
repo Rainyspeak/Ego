@@ -1,5 +1,6 @@
 // 移植自 OpenDrone(Tfly6, Gen3) se3_hopf/src/se3_ctrl.cpp
-// 话题接口：订阅 /mavros/local_position/odom、/mavros/imu/data、/mavros/state、/planner/output；
+// 话题接口：订阅 odom_topic(参数，默认 /mavros/local_position/odom；实机链用
+//           fastlio /Odometry)、/mavros/imu/data、/mavros/state、/planner/output；
 //           发布 /mavros/setpoint_raw/attitude、/flight_state；服务 /land、/mavros/set_mode、/mavros/cmd/arming
 #include "planner_ctrl/se3_hof_ctrl.h"
 #include "planner_ctrl/planner_output_utils.h"
@@ -14,7 +15,9 @@ Se3HofCtrl::Se3HofCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &private
     arming_client_ = nh_.serviceClient<mavros_msgs::CommandBool>("/mavros/cmd/arming");
     land_service_ = nh_.advertiseService("/land", &Se3HofCtrl::landCallback, this);
 
-    odom_sub_ = nh_.subscribe<nav_msgs::Odometry>("/mavros/local_position/odom", 10, &Se3HofCtrl::OdomCallback, this);
+    // 里程计来源参数化（订阅前先读）：仿真 mavros / 实机链 fastlio /Odometry
+    private_nh_.param<std::string>("odom_topic", odom_topic_, "/mavros/local_position/odom");
+    odom_sub_ = nh_.subscribe<nav_msgs::Odometry>(odom_topic_, 10, &Se3HofCtrl::OdomCallback, this);
     imu_sub_ = nh_.subscribe<sensor_msgs::Imu>("/mavros/imu/data", 10, &Se3HofCtrl::IMUCallback, this);
     state_sub_ = nh_.subscribe<mavros_msgs::State>("/mavros/state", 10, &Se3HofCtrl::StateCallback, this);
     plannerOutput_sub_ = nh_.subscribe<planner_ctrl::PlannerOutput>("/planner/output", 10, &Se3HofCtrl::plannerOutputCallback, this);
@@ -235,8 +238,10 @@ void Se3HofCtrl::execFSMCallback(const ros::TimerEvent &e){
                 desired_state_.p(1) = 0.0;
                 desired_state_.p(2) = takeoff_height_;
                 desired_state_.yaw = 0.0;
+                takeoff_reached_ = false;
                 flightState_ = TAKEOFF;
             }else{
+                takeoff_reached_ = true;  // 无自动起飞：直接进任务态，当前高度即有效
                 flightState_ = MISSION_EXECUTION;
             }
         }
@@ -251,6 +256,7 @@ void Se3HofCtrl::execFSMCallback(const ros::TimerEvent &e){
         }
         if(fabs(odom_data_.p(2) - takeoff_height_) < 0.1){
             ROS_INFO("TakeOff Complete");
+            takeoff_reached_ = true;
             flightState_ = MISSION_EXECUTION;
         }
         break;
@@ -342,6 +348,12 @@ void Se3HofCtrl::pubLocalPose(const Eigen::Vector3d &pose)
     msg.pose.position.x = pose[0];
     msg.pose.position.y = pose[1];
     msg.pose.position.z = pose[2];
+    // 偏航保持当前值（fastlio 系 yaw 投影）——全零四元数非法，PX4 会拒绝设定点
+    const Eigen::Quaterniond &q = odom_data_.q;
+    const double yaw = std::atan2(2.0 * (q.w() * q.z() + q.x() * q.y()),
+                                  1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z()));
+    msg.pose.orientation.w = std::cos(yaw * 0.5);
+    msg.pose.orientation.z = std::sin(yaw * 0.5);
 
     local_pos_pub_.publish(msg);
 }
@@ -349,6 +361,8 @@ void Se3HofCtrl::pubLocalPose(const Eigen::Vector3d &pose)
 bool Se3HofCtrl::landCallback(std_srvs::SetBool::Request &request, std_srvs::SetBool::Response &response) {
     ROS_INFO("trigger land!");
     flightState_ = LANDING;
+    response.success = true;      // 不填时默认 False，mission_state 日志会误报失败
+    response.message = "landing triggered";
     return true;
 }
 
@@ -457,6 +471,12 @@ void Se3HofCtrl::TryArm(const ros::Time &now) {
 
 void Se3HofCtrl::plannerOutputCallback(const planner_ctrl::PlannerOutput::ConstPtr &msg)
 {
+    // 起飞未达预定高度前不接受规划器航点：地面/爬升段检测器就可能锁框发 goal，
+    // 提前喂入会把 desired_state_ 从起飞目标拉走，导致爬升轨迹被干扰
+    if (!takeoff_reached_) {
+        ROS_WARN_STREAM_THROTTLE(3.0, "se3_hof: planner output ignored before takeoff height reached.");
+        return;
+    }
     if (msgExpired(msg->header.stamp, "planner_output")) {
         return;
     }

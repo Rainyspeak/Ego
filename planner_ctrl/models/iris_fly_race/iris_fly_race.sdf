@@ -1,0 +1,31 @@
+<?xml version="1.0" ?>
+<!-- iris_fly 的第一阶段竞赛变体：仅 Mid-360 激光雷达，去掉 depth_camera。
+     原因：无 GPU 机器上 gzserver 对深度相机做软件渲染，占满 CPU 导致
+     odom/imu 消息超龄、SE3 控制发散坠机；第一阶段穿框链路只用激光雷达。
+     用法：roslaunch px4 zero.launch sdf:=<本文件绝对路径>
+     （需与原 iris_fly.sdf 保持 Mid360 外参一致，改动须同步回原文件） -->
+<sdf version="1.5">
+  <model name='iris_fly'>
+    <include>
+      <uri>model://iris</uri>
+    </include>
+
+    <include>
+      <uri>model://Mid360</uri>
+      <pose>0.07 0 0.072 0 0.3925 0</pose>
+    </include>
+    <joint name="livox_joint" type="fixed">
+      <child>Mid360::livox_link</child>
+      <parent>iris::base_link</parent>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <upper>0</upper>
+          <lower>0</lower>
+        </limit>
+      </axis>
+    </joint>
+
+  </model>
+
+</sdf>

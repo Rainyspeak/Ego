@@ -22,6 +22,8 @@ namespace ego_planner
     nh.param("fsm/planning_horizen_time", planning_horizen_time_, -1.0);
     nh.param("fsm/emergency_time_", emergency_time_, 1.0);
 
+    // 预设多航点(PRESET_TARGET)：fsm/waypoint{i}_{x,y,z} 全部航点会被拟合成
+    // 一条连续全局轨迹，中间航点无"到达"语义、无逐点推进（见 planGlobalTrajbyGivenWps）
     nh.param("fsm/waypoint_num", waypoint_num_, -1);
     for (int i = 0; i < waypoint_num_; i++)
     {
@@ -67,8 +69,13 @@ namespace ego_planner
       cout << "Wrong target_type_ value! target_type_=" << target_type_ << endl;
   }
 
+  // 预设多航点任务：所有航点一次性拟合成单一 min-snap 全局轨迹，只有最后
+  // 一个航点是终点（end_vel=0）；中间航点仅是形状经过点（current_wp_ 从未
+  // 使用），间距 < planning_horizon 的近距航点会被 getLocalTarget 的 horizon
+  // 滚动 + 局部重规划切角跨过
   void EGOReplanFSM::planGlobalTrajbyGivenWps()
   {
+    //忽略航点推进任务
     std::vector<Eigen::Vector3d> wps(waypoint_num_);
     for (int i = 0; i < waypoint_num_; i++)
     {
@@ -76,6 +83,7 @@ namespace ego_planner
       wps[i](1) = waypoints_[i][1];
       wps[i](2) = waypoints_[i][2];
 
+      //停靠在最终的航点目标
       end_pt_ = wps.back();
     }
     bool success = planner_manager_->planGlobalTrajWaypoints(odom_pos_, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), wps, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero());
@@ -119,6 +127,8 @@ namespace ego_planner
     }
   }
 
+  // MANUAL_TARGET 单目标入口：只消费 Path 的 poses[0]，多航点 Path 的其余
+  // 点直接丢弃（多航点任务走 PRESET_TARGET，或由外层节点逐点发布单目标）
   void EGOReplanFSM::waypointCallback(const nav_msgs::PathConstPtr &msg)
   {
     if (msg->poses[0].pose.position.z < -0.1)
@@ -129,7 +139,8 @@ namespace ego_planner
     init_pt_ = odom_pos_;
 
     bool success = false;
-    end_pt_ << msg->poses[0].pose.position.x, msg->poses[0].pose.position.y, 1.0;
+    end_pt_ << msg->poses[0].pose.position.x, msg->poses[0].pose.position.y,
+        msg->poses[0].pose.position.z;
     success = planner_manager_->planGlobalTraj(odom_pos_, odom_vel_, Eigen::Vector3d::Zero(), end_pt_, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero());
 
     visualization_->displayGoalPoint(end_pt_, Eigen::Vector4d(0, 0.5, 0.5, 1), 0.3, 0);
@@ -532,6 +543,12 @@ namespace ego_planner
     return true;
   }
 
+  // 局部目标沿全局轨迹滚动：从 last_progress_time_ 起找第一个与当前位置
+  // 欧氏距离 ≥ planning_horizon 的轨迹点。两点注意：
+  // - 间距 < planning_horizon 的近距航点群会被整段跨过（局部目标落在它们
+  //   之外，局部 B 样条无 via-point 约束，拐角被切成圆角）
+  // - last_progress_time_ 只进不退：切角/绕障后最近点若落到后面的段上，
+  //   进度前跳，被跨过的航点不会再回来
   void EGOReplanFSM::getLocalTarget()
   {
     double t;
@@ -553,6 +570,8 @@ namespace ego_planner
         ROS_ERROR("last_progress_time_ ERROR !!!!!!!!!");
         return;
       }
+
+      //跳过近距离的切角
       if (dist < dist_min)
       {
         dist_min = dist;
@@ -570,6 +589,25 @@ namespace ego_planner
       local_target_pt_ = end_pt_;
     }
 
+    /* Pull the local target back along the global reference while it lies in
+       an inflated obstacle. Aiming at an occupied endpoint makes the last
+       control points unfixable, so every replan fails and the FSM falls into
+       EMERGENCY_STOP loops. */
+    double target_t = t;
+    for (int pb = 0; pb < 20; pb++)
+    {
+      if (planner_manager_->grid_map_->isInMap(local_target_pt_) &&
+          planner_manager_->grid_map_->getInflateOccupancy(local_target_pt_) == 1 &&
+          target_t - t_step > dist_min_t &&
+          (local_target_pt_ - start_pt_).norm() > 0.5)
+      {
+        target_t -= t_step;
+        local_target_pt_ = planner_manager_->global_data_.getPosition(target_t);
+      }
+      else
+        break;
+    }
+
     if ((end_pt_ - local_target_pt_).norm() < (planner_manager_->pp_.max_vel_ * planner_manager_->pp_.max_vel_) / (2 * planner_manager_->pp_.max_acc_))
     {
       // local_target_vel_ = (end_pt_ - init_pt_).normalized() * planner_manager_->pp_.max_vel_ * (( end_pt_ - local_target_pt_ ).norm() / ((planner_manager_->pp_.max_vel_*planner_manager_->pp_.max_vel_)/(2*planner_manager_->pp_.max_acc_)));
@@ -578,7 +616,7 @@ namespace ego_planner
     }
     else
     {
-      local_target_vel_ = planner_manager_->global_data_.getVelocity(t);
+      local_target_vel_ = planner_manager_->global_data_.getVelocity(target_t);
       // cout << "AA" << endl;
     }
   }

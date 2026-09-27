@@ -1,13 +1,19 @@
 <launch>
-  <arg name="takeoff_height" default="1.0"/>
+
+  <arg name="takeoff_height" default="1.5"/>
+  <!-- 控制器里程计来源：仿真 mavros / 实机链 fastlio /Odometry（与 EGO 目标同系） -->
+  <arg name="odom_topic" default="/mavros/local_position/odom"/>
   <arg name="geo_fence_x" default="50.0"/>
   <arg name="geo_fence_y" default="50.0"/>
   <arg name="geo_fence_z" default="6.0"/>
   <arg name="planner_cmd_topic" default="/planner_cmd"/>
   <arg name="planner_output_topic" default="/planner/output"/>
   <arg name="use_dynamic_reconfigure" default="false"/>
+  <!-- 消息有效期(s)：odom/imu/planner 输出超龄即丢弃。实机 0.01；重载仿真机建议 0.05，
+       否则卡顿时大量丢包+SE3 拿旧状态控制，严重时姿态发散翻机 -->
+  <arg name="msg_expire_time" default="0.01"/>
   <!-- 悬停油门：4S 约 0.25，6S 约 0.17 -->
-  <arg name="hover_percent" default="0.25"/>
+  <arg name="hover_percent" default="0.35"/>
 
   <node pkg="planner_ctrl" name="planner_adapter" type="planner_adapter.py" output="screen">
     <param name="adapter_type" value="position_command"/>
@@ -19,10 +25,12 @@
   <node pkg="planner_ctrl" name="se3_hof" type="se3_hof" output="screen">
     <param name="auto_takeoff" value="true"/>
     <param name="takeoff_height" value="$(arg takeoff_height)"/>
+    <param name="odom_topic" value="$(arg odom_topic)"/>
     <param name="geo_fence/x" value="$(arg geo_fence_x)"/>
     <param name="geo_fence/y" value="$(arg geo_fence_y)"/>
     <param name="geo_fence/z" value="$(arg geo_fence_z)"/>
     <param name="use_dynamic_reconfigure" value="$(arg use_dynamic_reconfigure)"/>
+    <param name="msg_expire_time" value="$(arg msg_expire_time)"/>
     <param name="hover_percent" value="$(arg hover_percent)"/>
   </node>
 </launch>

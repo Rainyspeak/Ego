@@ -380,6 +380,7 @@ int main(int argc, char **argv)
   nh_.getParam("pid_output_limit", pid_output_limit);
   nh_.getParam("position_kp", position_kp);
   nh_.getParam("position_error_limit", position_error_limit);
+  nh_.getParam("takeoff_height", takeoff_height);
   pid_integral_limit = std::max(0.0, pid_integral_limit);
   pid_output_limit = std::max(0.1, pid_output_limit);
   position_kp = std::max(0.0, position_kp);

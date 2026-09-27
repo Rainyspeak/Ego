@@ -289,6 +289,10 @@ namespace ego_planner
                                                    const std::vector<Eigen::Vector3d> &waypoints, const Eigen::Vector3d &end_vel, const Eigen::Vector3d &end_acc)
   {
 
+    // 多航点全局轨迹：航点作为 min-snap 的位置硬约束（全局路径精确穿过每个点），
+    // 但中间航点速度连续、时间按 段长/max_vel 分配（不在中间航点停留）——
+    // 航点"必达"只在全局形状层面成立；执行层（局部 B 样条重规划）看不见中间航点
+
     // generate global reference trajectory
 
     vector<Eigen::Vector3d> points;
@@ -346,6 +350,7 @@ namespace ego_planner
     time(0) *= 2.0;
     time(time.rows() - 1) *= 2.0;
 
+    //硬约束航点行为，执行重规划的b样条曲线
     PolynomialTraj gl_traj;
     if (pos.cols() >= 3)
       gl_traj = PolynomialTraj::minSnapTraj(pos, start_vel, end_vel, start_acc, end_acc, time);

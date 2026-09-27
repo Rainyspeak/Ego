@@ -1,10 +1,18 @@
 <launch>
+  <!-- path_snap：sim.launch 的 path_manager 接口版（sim.launch 保持原 waypoint
+       接口不动）。差异仅在航点链：waypoint_generator 换成 path_manager——
+       单点 goal(/move_base_simple/goal) 即成新任务（waypoint_generator 功能
+       已并入），寄存多航点 Path(/path_manager/path)，航点入队
+       /path_manager/enqueue（几何特征提取"看到就发"：参考路径在线增长，
+       未达先引不刹停），20 Hz carrot 发到 /waypoint_generator/waypoints
+       直接喂 EGO FSM（FSM 订阅不变）。 -->
   <arg name="map_size_x" value="40.0"/>
   <arg name="map_size_y" value="40.0"/>
   <arg name="map_size_z" value="10.0"/>
 
   <!--<arg name="odom_topic" value="/Odometry"/>-->
-  <arg name="odom_topic" value="/mavros/local_position/odom"/>
+  <!-- 里程计来源可覆盖：仿真默认 mavros，实机链（trace_stage）传 fastlio /Odometry -->
+  <arg name="odom_topic" default="/mavros/local_position/odom"/>
 
   <!--<arg name="cloud_topic" value="/cloud_registered"/>-->
   <arg name="processed_cloud_topic" value="/livox/lidar_world"/>
@@ -14,10 +22,15 @@
   <arg name="crop_half_y" value="0.25"/>
   <arg name="crop_half_z" value="0.2"/>
   <arg name="voxel_leaf_size" value="0.05"/>
-  <arg name="start_waypoint_generator" default="true"/>
   <arg name="start_rviz" default="true"/>
+
+  <!-- path_manager carrot 前视距离：建议 ≥ fsm/planning_horizon（本链为 3.5） -->
+  <arg name="lookahead_distance" default="5.0"/>
+  <!-- 队尾外推上限：检测不完美（下一框未及时入列）时沿末段继续飞行等待 -->
+  <arg name="tail_extrapolate_max" default="1.5"/>
+
   <!-- 动力学上限：默认 1.5/2.5，上层 launch（如 race_stage1）可覆盖降速 -->
-  <arg name="max_vel" default="1.5"/>
+  <arg name="max_vel" default="1.6"/>
   <arg name="max_acc" default="2.5"/>
 
   <!--<arg name="start_se3_hof" default="true"/>-->
@@ -97,7 +110,7 @@
     <arg name="max_vel" value="$(arg max_vel)"/>
     <arg name="max_acc" value="$(arg max_acc)"/>
     <!-- 航点约束距离 -->
-    <arg name="planning_horizon" value="2"/>
+    <arg name="planning_horizon" value="3.5"/>
 
     <!-- 1: RViz manual target, 2: EGO upper-level preset waypoint sequence. -->
     <arg name="flight_type" value="$(arg flight_type)"/>
@@ -127,12 +140,15 @@
     <param name="traj_server/time_forward" value="1.0" type="double"/>
   </node>
 
-  <node pkg="waypoint_generator" name="waypoint_generator" type="waypoint_generator"
-      output="screen" if="$(arg start_waypoint_generator)">
-    <remap from="~odom" to="$(arg odom_topic)"/>
-    <remap from="~goal" to="/move_base_simple/goal"/>
-    <remap from="~traj_start_trigger" to="/traj_start_trigger"/>
-    <param name="waypoint_type" value="manual-lonely-waypoint"/>
+  <node pkg="path_manager" type="path_ctrl" name="path_ctrl" output="screen">
+    <param name="goal_topic" value="/move_base_simple/goal"/>
+    <param name="path_topic" value="/path_manager/path"/>
+    <param name="goal_path_topic" value="/waypoint_generator/waypoints"/>
+    <param name="odom_topic" value="$(arg odom_topic)"/>
+    <param name="lookahead_distance" value="$(arg lookahead_distance)"/>
+    <!-- 队尾外推：检测丢失/下一框未入列时沿末段方向继续前移（继续飞行等待
+         后续航点入列），走到外推上限才收尾停发；0 = 关闭（到队尾即停） -->
+    <param name="tail_extrapolate_max" value="$(arg tail_extrapolate_max)"/>
   </node>
 
   <node pkg="odom_visualization" name="odom_visualization" type="odom_visualization" output="screen">
@@ -145,7 +161,7 @@
     <param name="robot_scale" value="1.0"/>
     <param name="tf45" value="false"/>
   </node>
-  
+
   <!--<node pkg="tf" type="static_transform_publisher" name="world_to_camera_init"
       args="0 0 0 0 0 0 world camera_init 100"/>
 
