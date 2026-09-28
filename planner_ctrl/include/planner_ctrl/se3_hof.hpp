@@ -10,7 +10,6 @@
 #include <nav_msgs/Odometry.h>
 #include "planner_ctrl/se3_utils.hpp"
 
-#define VEL_IN_BODY /* cancel the comment if the velocity in odom topic is relative to current body frame, not to world frame.*/
 // #define AIRSIM
 
 struct Odom_Data_t{
@@ -113,6 +112,11 @@ struct Controller_Output_t
 
 	// Collective mass normalized thrust
 	double thrust;
+
+	// Eigen 固定尺寸类型默认构造不清零：不显式初始化时 q/bodyrates 是栈上随机内存，
+	// 会被整包发往 FCU（预热路径曾把未初始化四元数发出）
+	Controller_Output_t()
+		: q(1.0, 0.0, 0.0, 0.0), bodyrates(Eigen::Vector3d::Zero()), thrust(0.0) {}
 };
 
 struct Imu_Data_t{
@@ -167,7 +171,10 @@ private:
 
 	double hover_percent_, max_hover_percent_;
 	double T_a_; // normalization constant
-	double P_ = 1e6;
+	double ta_min_, ta_max_;           // T_a_ 物理边界
+	double P_ = 50.0;                  // RLS 协方差初值；原 1e6 使首拍增益 K≈5，单步可把 T_a_ 拉偏 ±15
+	const double ta_step_max_ = 0.5;   // 单次更新允许的 T_a_ 变化上限
+	const double ta_innov_gate_ = 5.0; // 新息门限(m/s^2)，超出视为瞬态/振动等无效配对
 	const double rho_ = 0.998; // confidence
 	const double gravity_ = 9.81;
 	static constexpr double kAlmostZeroValueThreshold_ = 0.001;
@@ -264,6 +271,11 @@ public:
 		enu_frame_ = enu_frame;
 		vel_in_body_ = vel_in_body;
 		T_a_ = gravity_ / hover_percent_;
+		ta_min_ = gravity_ / max_hover_percent_;
+		ta_max_ = 1.6 * gravity_ / hover_percent_;
+		if (ta_max_ <= ta_min_) {
+			ta_max_ = 1.5 * ta_min_;
+		}
 		grav_vec_ << 0.0, 0.0, gravity_;
 
 		last_err_p_ = Eigen::Vector3d::Zero();
@@ -392,7 +404,12 @@ public:
 		return true;
 	}
 
-	bool estimateTa(const Eigen::Vector3d &est_a){
+	// 在线估计推力归一化常数 T_a_。模型 est_a(2) = thr * T_a_，est_a 为机体系 z 轴比力。
+	// 加固(9-28 冲顶复盘)：地面反力使 est_a 与推力解耦、大倾角/剧烈瞬态时 35~45ms 延迟
+	// 配对失真，原实现(P_=1e6、无门限、仅下界钳位)会在这类数据上把 T_a_ 砸到下界 13，
+	// 之后 u = a_cmd/T_a_ 全部过热直至饱和。现在：未离地/大倾角/垂直速度异常时冻结，
+	// 新息超门限丢弃本次更新，单步限幅 + 上下界。
+	bool estimateTa(const Eigen::Vector3d &est_a, const Odom_Data_t &odom){
 		ros::Time t_now = ros::Time::now();
 		while (timed_thrust_.size() >= 1)
 		{
@@ -407,25 +424,39 @@ public:
 				return false;
 			}
 
-			/***********************************************************/
-			/* Recursive least squares algorithm with vanishing memory */
-			/***********************************************************/
 			double thr = t_t.second;
 			timed_thrust_.pop();
 
+			// 冻结条件：未离地(高度<0.15m，地面反力污染模型)、倾角>35°、|vz|>3(冲顶/坠落瞬态)
+			Eigen::Vector3d body_z = odom.q.normalized().toRotationMatrix().col(2);
+			if (odom.p(2) < 0.15 ||
+				body_z(2) < 0.819 /* cos(35°) */ ||
+				std::abs(odom.v(2)) > 3.0){
+				return false;
+			}
+
+			double innov = est_a(2) - thr * T_a_;
+			if (!(std::abs(innov) <= ta_innov_gate_)){ // 同时拦截 NaN
+				return false;
+			}
+
+			/***********************************************************/
+			/* Recursive least squares algorithm with vanishing memory */
+			/***********************************************************/
+
 			/***********************************/
-			/* Model: est_a(2) = thr1acc_ * thr */
+			/* Model: est_a(2) = T_a_ * thr    */
 			/***********************************/
 
-			//卡尔曼滤波检测
 			double gamma = 1 / (rho_ + thr * P_ * thr);
 			double K = gamma * P_ * thr;
-			T_a_ = T_a_ + K * (est_a(2) - thr * T_a_);
-			P_ = (1 - K * thr) * P_ / rho_;
-			T_a_ = std::max(T_a_, gravity_ / max_hover_percent_);
-			// printf("%6.3f,%6.3f,%6.3f,%6.3f\n", T_a_, gamma, K, P_);
-			//fflush(stdout);
+			double T_a_new = T_a_ + K * innov;
+			T_a_new = std::min(T_a_new, T_a_ + ta_step_max_);
+			T_a_new = std::max(T_a_new, T_a_ - ta_step_max_);
+			T_a_ = std::min(std::max(T_a_new, ta_min_), ta_max_);
 
+			P_ = (1 - K * thr) * P_ / rho_;
+			P_ = std::min(std::max(P_, 1e-3), 50.0); // 防增益塌缩致死或再度爆炸
 			return true;
 		}
 		return false;

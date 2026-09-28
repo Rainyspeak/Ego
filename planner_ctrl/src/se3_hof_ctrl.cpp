@@ -39,12 +39,19 @@ Se3HofCtrl::Se3HofCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &private
     private_nh_.param<double>("odom_vel_threshold", odom_vel_threshold_, 3.0);
     private_nh_.param<bool>("auto_takeoff", auto_takeoff_, true);
     private_nh_.param<double>("takeoff_height", takeoff_height_, 2.0);
+    private_nh_.param<double>("takeoff_speed", takeoff_speed_, 0.4);
+    if (takeoff_speed_ <= 0.0 || takeoff_speed_ > 2.0) {
+        takeoff_speed_ = 0.4;
+    }
     private_nh_.param<double>("geo_fence/x", geo_fence_[0], 10.0);
     private_nh_.param<double>("geo_fence/y", geo_fence_[1], 10.0);
     private_nh_.param<double>("geo_fence/z", geo_fence_[2], 4.0);
 
-    enu_frame_ = true;
-    vel_in_body_ = true;
+    // 里程计速度系：mavros /local_position/odom 与 fastlio /Odometry(mainline) 的
+    // twist.linear 均为世界系(false)。仅当上游确实发布机体系速度时才置 true
+    // (feed 会左乘姿态转到世界系)。原硬编码 true 会在倾角大时把速度反馈向量错误旋转
+    private_nh_.param<bool>("enu_frame", enu_frame_, true);
+    private_nh_.param<bool>("vel_in_body", vel_in_body_, false);
 
     init_pose_ << 0, 0, 0.5;
     flightState_ = WAITING_FOR_CONNECTED;
@@ -71,16 +78,20 @@ Se3HofCtrl::Se3HofCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &private
     last_arm_request_ = ros::Time(0);
     last_land_request_ = ros::Time(0);
 
-    private_nh_.param<double>("hover_percent", hover_percent_, 0.25);
+    private_nh_.param<double>("hover_percent", hover_percent_, 0.40);
     private_nh_.param<double>("max_hover_percent", max_hover_percent_, 0.75);
     // 悬停油门用于初始化 T_a_ 推力归一化常数(=g/hover_percent)，稳态由 estimateTa 在线估计修正；
     // 值域非法时回退默认，避免 T_a_ 初值发散
     if (hover_percent_ <= 0.0 || hover_percent_ > 1.0) {
-        hover_percent_ = 0.25;
+        hover_percent_ = 0.40;
     }
     if (max_hover_percent_ > 1.0 || max_hover_percent_ < hover_percent_) {
         max_hover_percent_ = 0.75;
     }
+    // 预热/解锁接管前油门：解锁后到 TAKEOFF 接管前(/mavros/state ~1Hz 回报延迟，可达 1s)
+    // 该指令持续生效，高于悬停油门会直接把飞机打上天(9-28 冲顶根因之一)
+    private_nh_.param<double>("idle_thrust", idle_thrust_, 0.15);
+    idle_thrust_ = std::min(std::max(idle_thrust_, 0.0), hover_percent_);
 
     se3_hof_.init(hover_percent_, max_hover_percent_, enu_frame_, vel_in_body_);
     if (use_dynamic_reconfigure_) {
@@ -226,18 +237,26 @@ void Se3HofCtrl::execFSMCallback(const ros::TimerEvent &e){
     case WAITING_FOR_OFFBOARD:{
         ROS_INFO_ONCE("Waiting for OFFBOARD mode and arming...");
         Controller_Output_t init_output;
-        init_output.thrust = 0.6;
-        send_cmd(init_output, true); // send a zero command to initialize the offboard mode
+        // 预热指令必须无害：保持当前姿态(FCU 系) + 低于悬停的油门。
+        // 此前发送 0.6 油门 + 未初始化四元数，解锁瞬间即为 1.5 倍悬停推力，直接冲顶
+        init_output.q = imu_msg_received_ ? imu_data_.q : Eigen::Quaterniond(1.0, 0.0, 0.0, 0.0);
+        init_output.bodyrates.setZero();
+        init_output.thrust = idle_thrust_;
+        send_cmd(init_output, true); // stream setpoints to initialize the offboard mode
         ++offboard_warmup_counter_;
         TrySetOffboard(now);
         TryArm(now);
         if(currState_.mode == "OFFBOARD" && currState_.armed){
             if(auto_takeoff_){
                 ROS_INFO("Offboard and armed! Taking off...");
-                desired_state_.p(0) = 0.0;
-                desired_state_.p(1) = 0.0;
-                desired_state_.p(2) = takeoff_height_;
-                desired_state_.yaw = 0.0;
+                // 柔和起飞：位置/偏航锚定当前状态，避免横向/偏航阶跃；
+                // 高度不直接设目标值，交给 TAKEOFF 内的斜坡抬升
+                desired_state_.p(0) = odom_data_.p(0);
+                desired_state_.p(1) = odom_data_.p(1);
+                desired_state_.p(2) = odom_data_.p(2);
+                desired_state_.yaw = utils::fromQuaternion2yaw(odom_data_.q);
+                takeoff_start_z_ = odom_data_.p(2);
+                takeoff_start_time_ = now;
                 takeoff_reached_ = false;
                 flightState_ = TAKEOFF;
             }else{
@@ -249,10 +268,22 @@ void Se3HofCtrl::execFSMCallback(const ros::TimerEvent &e){
     }
     case TAKEOFF:{
         ROS_INFO_ONCE("Auto Taking off...");
+        // 高度设定按 takeoff_speed_ 线性抬升到 takeoff_height_，并给速度前馈。
+        // 此前对 takeoff_height_ 的阶跃目标会令 v_des = Kp_p*err_p 达 2~4.5 m/s、
+        // 净加速 +3 m/s²(猛冲)；斜坡+前馈下稳态位置误差收敛到 0，油门全程≈悬停值
+        const double t_elapse = std::max(0.0, (now - takeoff_start_time_).toSec());
+        const double z_ramp = takeoff_start_z_ + takeoff_speed_ * t_elapse;
+        if (z_ramp < takeoff_height_) {
+            desired_state_.p(2) = z_ramp;
+            desired_state_.v(2) = takeoff_speed_;
+        } else {
+            desired_state_.p(2) = takeoff_height_;
+            desired_state_.v(2) = 0.0;
+        }
         Controller_Output_t output;
         if(se3_hof_.calControl(odom_data_, imu_data_, desired_state_, output)){
             send_cmd(output, true);
-            se3_hof_.estimateTa(imu_data_.a);
+            se3_hof_.estimateTa(imu_data_.a, odom_data_);
         }
         if(fabs(odom_data_.p(2) - takeoff_height_) < 0.1){
             ROS_INFO("TakeOff Complete");
@@ -267,7 +298,7 @@ void Se3HofCtrl::execFSMCallback(const ros::TimerEvent &e){
         Controller_Output_t output;
         if(se3_hof_.calControl(odom_data_, imu_data_, desired_state_, output)){
             send_cmd(output, true);
-            se3_hof_.estimateTa(imu_data_.a);
+            se3_hof_.estimateTa(imu_data_.a, odom_data_);
         }
         break;
     }
@@ -276,7 +307,7 @@ void Se3HofCtrl::execFSMCallback(const ros::TimerEvent &e){
         Controller_Output_t output;
         if(se3_hof_.calControl(odom_data_, imu_data_, desired_state_, output)){
             send_cmd(output, true);
-            se3_hof_.estimateTa(imu_data_.a);
+            se3_hof_.estimateTa(imu_data_.a, odom_data_);
         }
         if((now - last_planner_msg_time_).toSec() < planner_timeout_){
             ROS_WARN("se3_hof: planner stream resumed, back to MISSION_EXECUTION.");
