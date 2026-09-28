@@ -8,13 +8,13 @@
   <arg name="processed_cloud_topic" value="/cloud_ego_registered"/>
   <arg name="cloud_frame" value="camera_init"/>
 
-  <arg name="crop_half_x" value="0.05"/>
-  <arg name="crop_half_y" value="0.05"/>
+  <arg name="crop_half_x" value="0.07"/>
+  <arg name="crop_half_y" value="0.07"/>
   <arg name="crop_half_z" value="0.05"/>
   <arg name="voxel_leaf_size" value="0.15"/>
   <!-- B样条拉伸（规划加速度裕度）：优化可行性按 a×ratio 执行，实机默认 0.8
        （转角半径被动拉大，控制器能力不变）；1.0 = 旧行为 -->
-  <arg name="plan_acc_ratio" default="0.8"/>
+  <arg name="plan_acc_ratio" default="0.75"/>
   <arg name="start_waypoint_generator" default="true"/>
   <arg name="start_rviz" default="true"/>
 

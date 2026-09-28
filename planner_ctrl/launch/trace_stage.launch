@@ -30,7 +30,7 @@
   <include file="$(find ego_planner)/launch/path_snap.launch">
     <arg name="start_rviz" value="$(arg start_rviz)"/>
     <arg name="odom_topic" value="$(arg odom_topic)"/>
-    <arg name="max_vel" value="1.0"/>
+    <arg name="max_vel" value="0.8"/>
     <arg name="max_acc" value="1.0"/>
     <!-- B样条拉伸：规划可行性按 0.8 m/s² 执行（转角半径下限 1→1.25 m@1m/s），
          控制器能力仍 1.0——实机跟踪贴 a_max 的紧弧勉强，规划留裕度 -->
@@ -66,8 +66,8 @@
   <node pkg="planner_ctrl" type="mission_state.py" name="mission_state" output="screen">
     <param name="goal_topic" value="/move_base_simple/goal"/>
     <param name="odom_topic" value="$(arg odom_topic)"/>
-    <param name="target_frames" value="9"/>
-    <param name="total_frames" value="9"/>
+    <param name="target_frames" value="3"/>
+    <param name="total_frames" value="3"/>
     <!-- 最后一个航点：手动指定（home_x/home_y 顶层 arg，默认 0,0），高度=起飞高度；
          无自动降落：RECALL 到位后悬停，遥控器切 POSITION 接管 -->
     <param name="home_x" value="$(arg home_x)"/>
