@@ -175,6 +175,11 @@ struct StabilizerParams {
   double center_ema_alpha = 0.35;
   double normal_ema_alpha = 0.35;
   double size_ema_alpha = 0.25;
+  // 预测模型（Holt 阻尼趋势，作用于组参数 c/n，P1/P3 由预测值重构保持组刚性）：
+  // 收敛段（锁定初期斜视角拟合的中心滑动）由趋势项外推提前到位。
+  // trend_beta = 0 严格退化为原纯 EMA（旧行为，测试基线）
+  double trend_beta = 0.0;
+  double trend_damping = 0.85;  // 趋势阻尼 φ：估计收敛后趋势应衰减，防外推过冲
   double approach_dist = 1.5;            // P1 距框
   double exit_dist = 2.5;                // P3 距框
   bool include_center_wp = true;         // 是否含 P2（框中心）
@@ -1844,6 +1849,10 @@ class FrameStabilizer {
   void setParams(const StabilizerParams& p) { p_ = p; }
   const StabilizerParams& params() const { return p_; }
 
+  // 最近一步预测残差（无预测/未更新时 -1）：估计健康度——收敛后应趋小，
+  // 持续偏大 = 观测与预测模型分歧（估计漂移/幻影候选）
+  double lastPredResidual() const { return last_pred_resid_; }
+
   // ---- 每帧驱动 ----
 
   void onCloudFrame() { stampCloud(); }
@@ -1867,6 +1876,7 @@ class FrameStabilizer {
         state_ = StabState::LOCKED;
         miss_count_ = 0;
         window_.clear();
+        clearTrend();  // 新锁定的趋势从零学起
       }
       return;
     }
@@ -1957,6 +1967,7 @@ class FrameStabilizer {
     miss_count_ = 0;
     frozen_ = false;
     frozen_wps_.clear();
+    clearTrend();
   }
 
  private:
@@ -1977,6 +1988,13 @@ class FrameStabilizer {
     miss_count_ = 0;
     frozen_ = false;
     frozen_wps_.clear();  // 不输出陈旧航点
+    clearTrend();
+  }
+
+  void clearTrend() {
+    c_trend_ = {{0, 0, 0}};
+    n_trend_ = {{0, 0, 0}};
+    last_pred_resid_ = -1.0;
   }
 
   bool consistentWith(const FrameDetection& ref, const FrameDetection& d) const {
@@ -2016,10 +2034,28 @@ class FrameStabilizer {
     return n % 2 == 1 ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
   }
 
+  // 带阻尼趋势的双指数预测（Holt）：β=0 分支严格等于原 EMA（逐位一致）。
+  // level 用"预测值"作先行项，趋势 b 衰减因子 φ；一步预测残差（|观测−预测|）
+  // 记录为观测健康度信号（残差持续大 = 估计漂移/幻影，可供上游确认/撤销）
   void emaUpdate(const FrameDetection& d) {
-    frame_.center = frame_.center + (d.center - frame_.center) * p_.center_ema_alpha;
     Vec3 nd = dot(d.normal, frame_.normal) < 0 ? -d.normal : d.normal;  // 同号对齐
-    frame_.normal = normalized(frame_.normal + (nd - frame_.normal) * p_.normal_ema_alpha);
+    if (p_.trend_beta > 0.0) {
+      const double phi = p_.trend_damping;
+      // 中心
+      const Vec3 c_forecast = frame_.center + c_trend_ * phi;
+      last_pred_resid_ = norm(d.center - c_forecast);
+      const Vec3 c_prev = frame_.center;
+      frame_.center = d.center * p_.center_ema_alpha + c_forecast * (1.0 - p_.center_ema_alpha);
+      c_trend_ = (frame_.center - c_prev) * p_.trend_beta + c_trend_ * phi * (1.0 - p_.trend_beta);
+      // 法向（分量级 Holt 后归一化，趋势向量小、组刚性保持）
+      const Vec3 n_forecast = frame_.normal + n_trend_ * phi;
+      const Vec3 n_prev = frame_.normal;
+      frame_.normal = normalized(nd * p_.normal_ema_alpha + n_forecast * (1.0 - p_.normal_ema_alpha));
+      n_trend_ = (frame_.normal - n_prev) * p_.trend_beta + n_trend_ * phi * (1.0 - p_.trend_beta);
+    } else {
+      frame_.center = frame_.center + (d.center - frame_.center) * p_.center_ema_alpha;
+      frame_.normal = normalized(frame_.normal + (nd - frame_.normal) * p_.normal_ema_alpha);
+    }
     frame_.width += (d.width - frame_.width) * p_.size_ema_alpha;
     frame_.height += (d.height - frame_.height) * p_.size_ema_alpha;
   }
@@ -2037,6 +2073,9 @@ class FrameStabilizer {
   StabState state_ = StabState::SEARCHING;
   std::deque<FrameDetection> window_;
   FrameDetection frame_;
+  Vec3 c_trend_ = {{0, 0, 0}};      // 中心趋势（Holt b 项）
+  Vec3 n_trend_ = {{0, 0, 0}};      // 法向趋势
+  double last_pred_resid_ = -1.0;   // 最近一步预测残差（-1 = 无预测）
   Vec3 viz_axis_ = {{1, 0, 0}};
   int miss_count_ = 0;
   bool frozen_ = false;

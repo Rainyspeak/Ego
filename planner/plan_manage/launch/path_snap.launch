@@ -32,6 +32,8 @@
   <!-- 动力学上限：默认 1.5/2.5，上层 launch（如 race_stage1）可覆盖降速 -->
   <arg name="max_vel" default="1.6"/>
   <arg name="max_acc" default="2.5"/>
+  <!-- B样条拉伸（规划加速度裕度）：优化可行性用 a×ratio，1.0=旧行为 -->
+  <arg name="plan_acc_ratio" default="1.0"/>
 
   <!--<arg name="start_se3_hof" default="true"/>-->
 
@@ -109,6 +111,7 @@
 
     <arg name="max_vel" value="$(arg max_vel)"/>
     <arg name="max_acc" value="$(arg max_acc)"/>
+    <arg name="plan_acc_ratio" value="$(arg plan_acc_ratio)"/>
     <!-- 航点约束距离 -->
     <arg name="planning_horizon" value="3.5"/>
 
@@ -146,6 +149,13 @@
     <param name="goal_path_topic" value="/waypoint_generator/waypoints"/>
     <param name="odom_topic" value="$(arg odom_topic)"/>
     <param name="lookahead_distance" value="$(arg lookahead_distance)"/>
+    <!-- 长轨迹 + 温和三航点锚（2026-09-28 用户定调"鲁棒性不够"）：框心锚+P1 锚
+         开启但斜坡跨度收窄到 2.5 m——绝大多数航段仍是全量前视的长轨迹跟随
+         （流畅），仅最后对准段收进 P1→框心→P3 轴（穿框对准鲁棒性）。若仍
+         出现进框前拖速，把 center_gate_window 收到 2.0 或 center_lookahead
+         置 0 关闭 -->
+    <param name="center_lookahead" value="2.0"/>
+    <param name="center_gate_window" value="2.5"/>
     <!-- 队尾外推：检测丢失/下一框未入列时沿末段方向继续前移（继续飞行等待
          后续航点入列），走到外推上限才收尾停发；0 = 关闭（到队尾即停） -->
     <param name="tail_extrapolate_max" value="$(arg tail_extrapolate_max)"/>

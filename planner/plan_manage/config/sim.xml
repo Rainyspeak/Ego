@@ -19,6 +19,9 @@
 
   <arg name="max_vel"/>
   <arg name="max_acc"/>
+  <!-- 规划加速度裕度（B样条拉伸）：优化可行性用 a×该系数（<1 拉大转角半径），
+       1.0 = 与 max_acc 一致（旧行为）；时间分配/控制器能力不受影响 -->
+  <arg name="plan_acc_ratio" default="1.0"/>
   <arg name="planning_horizon"/>
 
   <arg name="point_num"/>
@@ -164,8 +167,10 @@
     <param name="manager/feasibility_tolerance" value="0.10" type="double"/>
     <param name="manager/planning_horizon" value="$(arg planning_horizon)" type="double"/>
 
-    <!-- 优化目标权重：平滑/碰撞/动力学可行性/末端贴合。调 lambda_collision 增强避障 -->
-    <param name="optimization/lambda_smooth" value="0.40" type="double"/>
+    <!-- 优化目标权重：平滑/碰撞/动力学可行性/末端贴合。调 lambda_collision 增强避障；
+         lambda_smooth 0.40→0.60（2026-09-28）：转角弧度拉伸——fitness(1.2)远大于
+         smooth 时样条贴弯心走，弧度收得紧，实机跟踪勉强 -->
+    <param name="optimization/lambda_smooth" value="0.60" type="double"/>
     <param name="optimization/lambda_collision" value="0.45" type="double"/>
     <param name="optimization/lambda_feasibility" value="0.1" type="double"/>
     <param name="optimization/lambda_fitness" value="1.2" type="double"/>
@@ -176,6 +181,8 @@
 
     <param name="optimization/max_vel" value="$(arg max_vel)" type="double"/>
     <param name="optimization/max_acc" value="$(arg max_acc)" type="double"/>
+    <!-- B样条拉伸：优化可行性实际执行的 a = max_acc × plan_acc_ratio -->
+    <param name="optimization/acc_margin" value="$(arg plan_acc_ratio)" type="double"/>
 
     <!-- traj_server 输出指令限幅：limit_ratio 为超限回缩比例 -->
     <param name="bspline/limit_vel" value="$(arg max_vel)" type="double"/>

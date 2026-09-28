@@ -166,6 +166,10 @@ class WindowDetectorNode {
     pnh_.param("center_ema_alpha", sp_.center_ema_alpha, sp_.center_ema_alpha);
     pnh_.param("normal_ema_alpha", sp_.normal_ema_alpha, sp_.normal_ema_alpha);
     pnh_.param("size_ema_alpha", sp_.size_ema_alpha, sp_.size_ema_alpha);
+    // 预测模型（Holt 阻尼趋势）：beta 0 = 纯 EMA 旧行为；>0 时锁定后的精化
+    // 带趋势外推（收敛段提前到位），status 带 |pred= 一步预测残差
+    pnh_.param("trend_beta", sp_.trend_beta, sp_.trend_beta);
+    pnh_.param("trend_damping", sp_.trend_damping, sp_.trend_damping);
     pnh_.param("approach_dist", sp_.approach_dist, sp_.approach_dist);
     pnh_.param("exit_dist", sp_.exit_dist, sp_.exit_dist);
     pnh_.param("include_center_wp", sp_.include_center_wp, sp_.include_center_wp);
@@ -218,7 +222,7 @@ class WindowDetectorNode {
     // 速度自适应累积窗：窗口内机体弧长封顶 accumulate_max_dist——高速时收缩
     // 窗口，世界系累积的配准误差/框壁壳厚预算不随速度增长（提速后框壁多层
     // 壳 → 平面拟合/中心估计跳变 → 锁定不稳的主因）；0 = 固定窗口（旧行为）
-    pnh_.param("accumulate_max_dist", accumulate_max_dist_, 1.5);
+    pnh_.param("accumulate_max_dist", accumulate_max_dist_, accumulate_max_dist_);
     pnh_.param("accumulate_min_time", accumulate_min_time_, 0.3);
     accum_ = wd::PointAccumulator(accumulate_time_, accumulate_voxel_);
 
@@ -539,12 +543,17 @@ class WindowDetectorNode {
   void publishStatus(const std::string& detect_status) {
     std_msgs::String s;
     const int n_done = traversed_events_;
+    char pred_buf[24] = {0};
+    if (stab_.locked() && stab_.lastPredResidual() >= 0.0) {
+      std::snprintf(pred_buf, sizeof(pred_buf), "|pred=%.2f", stab_.lastPredResidual());
+    }
     s.data = (stab_.locked() ? std::string("LOCKED") : std::string("SEARCHING")) +
              "|detect=" + detect_status +
              "|progress=" + std::to_string(stab_.lockProgress()) + "/" + std::to_string(sp_.lock_count) +
              "|miss=" + std::to_string(stab_.missCount()) + "/" + std::to_string(sp_.unlock_miss_count) +
              "|frozen=" + (stab_.frozen() ? "1" : "0") +
              "|pts=" + std::to_string(last_points_) +
+             pred_buf +
              "|done=" + std::to_string(n_done);
     status_pub_.publish(s);
   }
@@ -695,7 +704,8 @@ class WindowDetectorNode {
   bool accumulate_ = true;
   double accumulate_time_ = 2.0;
   double accumulate_voxel_ = 0.05;
-  double accumulate_max_dist_ = 1.5;  // 速度自适应累积窗弧长上限，0 = 固定窗口
+  double accumulate_max_dist_ = 2.0;  // 速度自适应累积窗弧长上限，0 = 固定窗口；
+                                       // 2.0 = 常规竞速速度（≤2 m/s）下不缩窗
   double accumulate_min_time_ = 0.3;  // 自适应窗口下限（防点数不足）
   wd::PointAccumulator accum_;
   double speed_est_ = 0.0;                       // odom 差分速度（EMA）

@@ -28,10 +28,9 @@ namespace path_manager {
 //      三航点组批量入队——批次与队尾逐点（≤4 点）邻近 ≤ batch_match_dist 则
 //      原位更新（EMA 精化刷新本组）；队尾不匹配先做已入列校验
 //      （revalidateEnqueued）：批次与容器内已有航点命中过半即同框重识别，
-//      原位刷新/缺员补插，不重复追加；命中不足则是新框，走二次校验闸门
-//      （validateNewFrame）：连续 validate_count 次观测逐点一致（≤
-//      validate_match_dist）才放行，校验完成直接入队——单帧野值/高速滑动
-//      估计被挡在队列外。队列持久增长成完整穿框路径，进度只进不退。
+//      原位刷新/缺员补插，不重复追加；其余是新框：**乐观入列**（第一帧立即
+//      追加，入列零延迟）+ 后置二次校验（未确认组被远离新组替换时按幻影
+//      撤销）。队列持久增长成完整穿框路径，进度只进不退。
 //
 // 引导：20 Hz（timer_dt）把 odom 投影求 progress，发布 progress+lookahead 的
 // 单点 Path 到 goal_path_topic。框心热存储（center_topic）登记的未越过框心
@@ -89,7 +88,6 @@ class PathManager {
   void appendToMission(const geometry_msgs::PoseStamped& wp);
   void enqueueBatch(const nav_msgs::Path& batch);
   bool revalidateEnqueued(const nav_msgs::Path& batch);
-  bool validateNewFrame(const nav_msgs::Path& batch);
   size_t nearestEnqueuedIndex(const Eigen::Vector3d& p,
                               const std::vector<size_t>& skip) const;
   void rebuildLengths();
@@ -151,9 +149,15 @@ class PathManager {
     bool passed = false;
   };
   std::vector<CenterEntry> centers_;  // FIFO，上限 64
-  double center_lookahead_ = 2.0;     // 框心处的前视下限（贴轴；0 = 关闭硬化）
+  double center_lookahead_ = 0.0;     // 框心处的前视下限。0=关（默认，纯
+                                      // lookahead 长轨迹跟随——2026-09-28 用户
+                                      // 回归此行为；>0 开启框心锚+P1 锚约束）
   double center_gate_window_ = 0.0;   // 前视收窄斜坡跨度：距框心该弧长内
                                       // lookahead 线性收窄，0 = lookahead+1
+  double p1_lookahead_ = 2.5;         // 对准点 P1 处的前视下限：距 P1 同跨度
+                                      // 也收窄（carrot 贴入 P1 的路径段，转弯
+                                      // 提前完成；只锚框心会让 carrot 越过 P1
+                                      // 直奔框心，急转弯来不及）
   double lookahead_speed_gain_ = 0.0; // 框心处前视下限的速度增益：下限 =
                                       // center_lookahead + gain·|v|，纯跟踪
                                       // 经典 L=k·v+L0；0 = 固定下限（旧语义）
@@ -162,15 +166,18 @@ class PathManager {
   bool recall_mode_ = false;  // 回溯模式：反转队列回 home，屏蔽动态任务输入
                               //（仅显式 path_topic 新任务可解除）
 
-  // ---- 新框二次校验（入队闸门）：连续 validate_count 次观测逐点一致才放行，
-  // 校验完成直接入队。挂起候选 2 s 无新观测过期作废（检测中断后的旧候选
-  // 不能当新框的确认依据）；候选被跳变的新观测替换则重新计数 ----
-  nav_msgs::Path pending_batch_;
-  size_t pending_hits_ = 0;
-  ros::Time pending_stamp_;
-  bool validate_before_enqueue_ = true;  // false = 跳过闸门（旧行为）
-  int validate_count_ = 2;               // 确认所需一致观测次数，1 = 立即入队
-  double validate_match_dist_ = 0.4;     // 逐点一致阈值（锁定 EMA 帧间不会超）
+  // ---- 新组乐观入列 + 后置二次校验（发散撤销）：新框第一帧立即入列（入列
+  // 延迟=0，流畅优先）；入列后队尾精化批次累计确认，未确认（hits <
+  // enqueue_verify_count）期间若新组与本组远离 ≥ enqueue_retract_dist 且在
+  // enqueue_retract_time 内 → 本组按幻影撤销（队列尾部整组移除，进度投影
+  // 只进不退可越过短暂回撤）----
+  nav_msgs::Path last_group_;
+  size_t last_group_hits_ = 0;      // 队尾精化累计的确认批次数
+  ros::Time last_group_stamp_;
+  bool enqueue_verify_ = true;      // false = 完全旧行为（无撤销）
+  int enqueue_verify_count_ = 2;    // 确认所需精化批次（10 Hz 下 ~0.2 s）
+  double enqueue_retract_dist_ = 2.0;  // 新组与本组逐点全远离阈值（判幻影）
+  double enqueue_retract_time_ = 3.0;  // 撤销窗口：入列后该时长内未确认才可撤
 
   bool has_odom_ = false;
   bool has_path_ = false;

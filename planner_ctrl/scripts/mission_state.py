@@ -1,24 +1,31 @@
 #!/usr/bin/env python3
-# mission_state —— 
+# mission_state —— 第一阶段穿框任务状态机（技术说明 §5 race_manager 子集）
 #
-# 架构：显式 MissionState 枚举 + 状态处理函数表（HANDLERS）+ 进入钩子（on_enter）。
-#   · 回调只收数据（检测状态/里程计/飞控状态），不改状态——状态迁移只发生在
-#     spin 循环里由当前状态的处理函数决定，消除了 if/elif 链里的隐式迁移；
-#   · 每个状态一个 _handle_<STATE>()，返回下一状态或 None（保持）；
-#   · 迁移统一走 transition()：进入钩子 + ~state 发布 + 日志，可观测。
+# 架构：显式 MissionState 枚举 + 状态处理函数表（HANDLERS）。
+#   · 感知回调只收数据不改状态；状态迁移只发生在 spin 循环里，由当前状态
+#     的 _handle_<STATE>() 返回下一状态（None = 保持）；
+#   · 迁移统一走 transition()（日志 + ~state 发布），可观测。
 #
-# 状态图（对齐《无人机竞速赛-技术说明》§5 race_manager 第一阶段子集）：
-#   IDLE ──起飞──> RACING ──done≥target──┬─(return_home)─> RECALL ──回原点悬停，人工接管降落
-#        └──────────────其余任意态 OFFBOARD 丢失───────────────> ABORTED      │
-#   LAND_NOW ──已落地──> DONE（一次性汇总）<──────────────────────────────────┘
-#   超时/无进展保护（默认禁用）与 se3 已在降落（围栏/断流/人工切 AUTO.LAND）
-#   从 RACING/RECALL 强制进入 LAND_NOW。
+# 状态图（当前语义，无任务侧自动降落）：
+#   TAKEOFF ──飞行中──> RACING ──done≥target──┬─(return_home)─> RECALL（回 home 悬停，
+#     │                                        │                 遥控器切 POSITION 人工接管）
+#     │  OFFBOARD 丢失（人工接管）             └─(不开回溯)────> LAND_NOW
+#     └──────────────> ABORTED（停手）
+#   LAND_NOW ──已落地──> DONE（一次性汇总）
+#   另：se3 已在降落（围栏/断流/人工切 AUTO.LAND）时，任意非终态强制 LAND_NOW 跟随。
+#   超时/无进展保护默认禁用（参数 ≤0）。
 #
-# 输入：/window_detector/status、/path_manager/frame_count（框心穿越计数）、
-#       /window_detector/stable_frame、/flight_state(se3)、
-#       /mavros/state、/mavros/local_position/odom
-# 输出：~state(std_msgs/String)、/path_manager/recall(回溯触发,携带 home 原点)
-# 服务：/land(std_srvs/SetBool，缺省回退 mavros set_mode AUTO.LAND)
+# 穿框计数（done）：双源取最大、单调递增（_bump_done）
+#   · detector——/window_detector/status 的 done=N（穿越事件，要求穿越瞬间仍锁定）；
+#   · centers——/path_manager/frame_count（路径进度越过已登记框心 +0.5 m，与锁定
+#     状态解耦；锁丢失/幻影重锁时 detector 会漏计，此源补齐）。
+#
+# 输入：/window_detector/status、/path_manager/frame_count、
+#       /window_detector/stable_frame、/flight_state(se3)、/mavros/state、odom(~odom_topic)
+# 输出：~state(String，latch)、/path_manager/recall(PoseStamped=home，2 s 周期重发)、
+#       ~goal_topic(仅搜索探路点)
+# 服务：/window_detector/commit_crossing(Trigger)、/land(SetBool，缺省回退 mavros
+#       set_mode AUTO.LAND)
 
 import math
 from enum import Enum
@@ -30,7 +37,7 @@ from nav_msgs.msg import Odometry
 from std_msgs.msg import String, Int8, Int32
 from std_srvs.srv import SetBool, Trigger
 
-# se3_hof_ctrl.h FlightState 枚举
+# se3_hof_ctrl.h FlightState 枚举值（/flight_state）
 FS_TAKEOFF = 2
 FS_MISSION = 3
 FS_LANDING = 4
@@ -47,54 +54,26 @@ def dist3d(a, b):
 
 
 class MissionState(Enum):
-    TAKEOFF = 'TAKEOFF'            # 等待起飞
+    TAKEOFF = 'TAKEOFF'      # 等待起飞（初始态）
     RACING = 'RACING'        # 穿框竞赛
-    RECALL = 'RECALL'        # 回溯：反转存储的注视航点倒数框返回起飞原点
-    LAND_NOW = 'LAND_NOW'    # 触发降落并等待落地
+    RECALL = 'RECALL'        # 回溯：反转存储的注视航点倒数框回 home，到位悬停
+    LAND_NOW = 'LAND_NOW'    # 触发/跟随降落并等待落地（任务侧不再主动进入）
     DONE = 'DONE'            # 已落地，一次性汇总
     ABORTED = 'ABORTED'      # 人工接管，停手
 
 
 class MissionStateMachine:
     def __init__(self):
-        self.target_frames = int(rospy.get_param('~target_frames', 9))
-        self.total_frames = int(rospy.get_param('~total_frames', 9))
-        # 超时降落默认取消（0=禁用）；需要恢复保护时 launch 传正值（如 420/90）
-        self.mission_timeout = float(rospy.get_param('~mission_timeout', 0.0))
-        self.no_progress_timeout = float(rospy.get_param('~no_progress_timeout', 0.0))
-        self.return_home = bool(rospy.get_param('~return_home', True))
-        # 返航目标（回溯 carrot 队尾接的点）。无自动降落：RECALL 到位后悬停，
-        # 人工接管降落（OFFBOARD 断开即 ABORTED 停手；se3 急停保护不受影响）
-        self.home_x = float(rospy.get_param('~home_x', 0.0))
-        self.home_y = float(rospy.get_param('~home_y', 0.0))
-        self.home_z = float(rospy.get_param('~home_z', 1.2))
-        self.goal_topic = rospy.get_param('~goal_topic', '/move_base_simple/goal')
-        # 里程计来源：仿真 mavros / 实机链 fastlio /Odometry（pos 与回溯 home 判定用）
-        self.odom_topic = rospy.get_param('~odom_topic', '/mavros/local_position/odom')
-
-        # 穿框提交（方案A §4.4）：锁定且距框进入 [commit_min_dist, commit_max_dist]
-        # 时调 /window_detector/commit_crossing 冻结框参数——EGO 沿冻结法向直穿，
-        # 规避 <2 m 近距检测盲区的解锁/漂移（本机实测根因）
-        self.commit_enabled = bool(rospy.get_param('~commit_enabled', True))
-        self.commit_min_dist = float(rospy.get_param('~commit_min_dist', 1.2))
-        self.commit_max_dist = float(rospy.get_param('~commit_max_dist', 4.5))
-        self.commit_retry_interval = float(rospy.get_param('~commit_retry_interval', 3.0))
-
-        # 最小搜索行为（技术说明 §5.1 SEARCH 的降级实现）：穿越计数停滞且
-        # 已失锁超过 search_nudge_after 秒时，向四周发短距探路点改变观察几何
-        self.search_nudge_enabled = bool(rospy.get_param('~search_nudge_enabled', True))
-        self.search_nudge_after = float(rospy.get_param('~search_nudge_after', 10.0))
-        self.search_nudge_interval = float(rospy.get_param('~search_nudge_interval', 8.0))
-        self.search_nudge_radius = float(rospy.get_param('~search_nudge_radius', 2.5))
+        self._read_params()
 
         # ---- 感知输入（回调只写这里，不改状态）----
         self.done = 0
-        self.done_times = []            # 每框穿越时刻（相对起飞）
+        self.done_times = []            # 每框穿越时刻（相对起飞，汇总用）
         self.detector_locked = False
         self.detector_frozen = False
-        self.frame_center = None
+        self.frame_center = None        # 最近有效 stable_frame 框心
         self.frame_msg_time = None
-        self.commit_frame = None        # 已提交框中心（防重复提交）
+        self.commit_frame = None        # 已提交框中心（防同框重复提交）
         self.commit_request_time = rospy.Time(0)
         self.last_nudge_time = rospy.Time(0)
         self.nudge_angle = 0.0
@@ -109,12 +88,13 @@ class MissionStateMachine:
         self.last_progress_time = None  # 最近一次穿越计数增长
         self.finish_reason = ''
         self.land_request_time = rospy.Time(0)
+        self.recall_pub_time = rospy.Time(0)
         self.final_summary = None       # DONE 一次性汇总标记
-        self._land_service = None       # None=未探测, False=无 /land, 有值=se3 服务代理
+        self._land_service = None       # None=未探测, False=无 /land, 有值=服务代理
 
+        # ---- ROS 接口 ----
         self.state_pub = rospy.Publisher('~state', String, queue_size=5, latch=True)
         self.recall_pub = rospy.Publisher('/path_manager/recall', PoseStamped, queue_size=1)
-        self.recall_pub_time = rospy.Time(0)
         self.goal_pub = rospy.Publisher(self.goal_topic, PoseStamped, queue_size=1)
         rospy.Subscriber('/window_detector/status', String, self.status_cb, queue_size=1)
         rospy.Subscriber('/path_manager/frame_count', Int32, self.frame_count_cb, queue_size=1)
@@ -126,6 +106,39 @@ class MissionStateMachine:
         rospy.loginfo('mission_state: target=%d/%d frames, timeout=%.0fs, return_home=%s',
                       self.target_frames, self.total_frames, self.mission_timeout, self.return_home)
         self.publish_state()
+
+    def _read_params(self):
+        """集中读参数：任务 / 返航 / 穿框提交 / 搜索探路"""
+        # 任务
+        self.target_frames = int(rospy.get_param('~target_frames', 9))
+        self.total_frames = int(rospy.get_param('~total_frames', 9))
+        # 超时保护默认取消（0=禁用）；需要恢复时 launch 传正值
+        self.mission_timeout = float(rospy.get_param('~mission_timeout', 0.0))
+        self.no_progress_timeout = float(rospy.get_param('~no_progress_timeout', 0.0))
+        self.return_home = bool(rospy.get_param('~return_home', True))
+
+        # 返航目标（回溯 carrot 队尾接的点）；无自动降落，到位悬停人工接管
+        self.home_x = float(rospy.get_param('~home_x', 0.0))
+        self.home_y = float(rospy.get_param('~home_y', 0.0))
+        self.home_z = float(rospy.get_param('~home_z', 1.2))
+
+        # 话题
+        self.goal_topic = rospy.get_param('~goal_topic', '/move_base_simple/goal')
+        self.odom_topic = rospy.get_param('~odom_topic', '/mavros/local_position/odom')
+
+        # 穿框提交（方案A §4.4）：锁定且距框进入 [min,max] 时调 commit_crossing
+        # 冻结框参数直穿——EGO 沿冻结法向直穿，规避 <2 m 近距盲区的解锁/漂移
+        self.commit_enabled = bool(rospy.get_param('~commit_enabled', True))
+        self.commit_min_dist = float(rospy.get_param('~commit_min_dist', 1.2))
+        self.commit_max_dist = float(rospy.get_param('~commit_max_dist', 4.5))
+        self.commit_retry_interval = float(rospy.get_param('~commit_retry_interval', 3.0))
+
+        # 搜索探路（§5.1 SEARCH 降级实现）：计数停滞且失锁时发短距探路点
+        # 改变观察几何（侧视方框是窄线、近环点云稀疏，悬停等不来锁定）
+        self.search_nudge_enabled = bool(rospy.get_param('~search_nudge_enabled', True))
+        self.search_nudge_after = float(rospy.get_param('~search_nudge_after', 10.0))
+        self.search_nudge_interval = float(rospy.get_param('~search_nudge_interval', 8.0))
+        self.search_nudge_radius = float(rospy.get_param('~search_nudge_radius', 2.5))
 
     # ---------------- 感知回调（只收数据） ----------------
 
@@ -141,14 +154,12 @@ class MissionStateMachine:
                     continue
 
     def frame_count_cb(self, msg):
-        # path_manager 框心穿越计数（centers_ 已越过数，Int32 latch）：判定 =
-        # 路径进度越过已登记框心 0.5 m，与穿越瞬间的检测器锁定状态解耦——
-        # 锁丢失/幻影重锁时检测器 done 会漏计（实测 6-7/9 穿 9 不达标），
-        # 由此计数补齐；与检测器计数取最大（_bump_done 单调）
+        # path_manager 框心穿越计数（Int32 latch）：路径进度越过已登记框心 0.5 m，
+        # 与穿越瞬间的锁定状态解耦——detector 漏计（实测 6-7/9）时由此补齐
         self._bump_done(msg.data, 'centers')
 
     def _bump_done(self, new_done, source):
-        """穿越计数单调抬升（检测器事件 / 框心存储两源取最大）；source 入日志"""
+        """穿越计数单调抬升（detector / centers 两源取最大）；source 入日志"""
         if new_done <= self.done:
             return
         now = rospy.Time.now()
@@ -164,7 +175,7 @@ class MissionStateMachine:
         self.commit_frame = None  # 穿越完成，允许提交下一个框
 
     def frame_cb(self, msg):
-        # stable_frame：位置=锁定框中心（latch，解锁时发布空消息）
+        # stable_frame：位置=锁定框中心（latch，解锁时发布空消息→全零坐标跳过）
         p = msg.pose.position
         if not (p.x == 0.0 and p.y == 0.0 and p.z == 0.0):
             self.frame_center = (p.x, p.y, p.z)
@@ -203,9 +214,9 @@ class MissionStateMachine:
         self.publish_state()
 
     def finish(self, to_state):
-        """收尾入口。RECALL=回溯返航（return_home 开启时把 home 发给
-        path_manager 反转存储航点原路返回，到位后悬停等人工接管）；否则
-        LAND_NOW 仅由 se3 急停跟随路径进入（任务侧无自动降落）"""
+        """任务收尾入口：RACING 达标后选 RECALL（回溯返航）或 LAND_NOW（不开
+        return_home 时）。LAND_NOW 仅两种来源：此处不开回溯、或 spin 里跟随
+        se3 急停降落——任务侧没有其它自动降落路径"""
         if self.state in (MissionState.RECALL, MissionState.LAND_NOW, MissionState.DONE, MissionState.ABORTED):
             return None
         if to_state == MissionState.RECALL:
@@ -214,7 +225,7 @@ class MissionStateMachine:
 
     # ---------------- 各状态处理（返回下一状态或 None 保持） ----------------
 
-    def _handle_IDLE(self):
+    def _handle_TAKEOFF(self):
         if self.flying():
             if self.takeoff_time is None:
                 self.takeoff_time = rospy.Time.now()
@@ -224,36 +235,23 @@ class MissionStateMachine:
         return None
 
     def _handle_RACING(self):
-        # 遥控/地面站接管：OFFBOARD 丢失即停手（不替人做降落决策）
-        if self.mode not in ('OFFBOARD', 'AUTO.LAND'):
+        if self._manual_takeover():
             self.finish_reason = 'manual takeover (%s)' % self.mode
             return MissionState.ABORTED
-        # 距框进入提交窗 → 冻结框参数直穿（每周期检查，内部限频）
-        self.try_commit()
-        # 穿越计数停滞且失锁 → 探路（内部有冻结/锁定保护与限频）
-        self.try_search_nudge()
+        self.try_commit()          # 距框进提交窗 → 冻结直穿（内部限频）
+        self.try_search_nudge()    # 计数停滞且失锁 → 探路（内部限频）
         if self.done >= self.target_frames:
             self.finish_reason = 'target reached (%d frames)' % self.done
-            if self.return_home:
-                return self.finish(MissionState.RECALL)
+            return self.finish(MissionState.RECALL if self.return_home else MissionState.LAND_NOW)
+        reason = self._timeout_reason()
+        if reason:
+            self.finish_reason = reason
             return MissionState.LAND_NOW
-        if self.takeoff_time is not None:
-            # 超时保护可整体关闭（参数 <=0 即禁用，用户 2026-09-26 取消超时降落）
-            elapsed = (rospy.Time.now() - self.takeoff_time).to_sec()
-            if self.mission_timeout > 0.0 and elapsed > self.mission_timeout:
-                self.finish_reason = 'mission timeout %.0fs' % self.mission_timeout
-                return MissionState.LAND_NOW
-            if (self.no_progress_timeout > 0.0 and self.last_progress_time is not None and
-                    (rospy.Time.now() - self.last_progress_time).to_sec() > self.no_progress_timeout):
-                self.finish_reason = 'no progress for %.0fs' % self.no_progress_timeout
-                return MissionState.LAND_NOW
         return None
 
     def _handle_RECALL(self):
         # 周期重发回溯触发（path_manager 侧幂等，重复触发安全）：携带 home，
-        # path_manager 反转飞行过程中存储的注视航点，carrot 倒数框原路返回。
-        # 无自动降落：到位后悬停，遥控器切 POSITION 即接管（PX4 闭环，任务
-        # 节点状态不再影响飞行）
+        # carrot 沿反转队列倒数框返回；到位后悬停，遥控器切 POSITION 即接管
         now = rospy.Time.now()
         if (now - self.recall_pub_time).to_sec() > 2.0:
             self.recall_pub_time = now
@@ -261,7 +259,7 @@ class MissionStateMachine:
         return None
 
     def _handle_LAND_NOW(self):
-        # se3 收到 /land 后会切 AUTO.LAND；2s 重试直到看到 LANDING
+        # 请求降落（2 s 重试）直到 se3 报 LANDING/LANDED 或飞控已切 AUTO.LAND
         if (self.flight_state not in (FS_LANDING, FS_LANDED) and self.mode != 'AUTO.LAND'
                 and (rospy.Time.now() - self.land_request_time).to_sec() > 2.0):
             self.land_request_time = rospy.Time.now()
@@ -279,7 +277,7 @@ class MissionStateMachine:
         return None  # 停手，交还操控权
 
     HANDLERS = {
-        MissionState.TAKEOFF: _handle_IDLE,
+        MissionState.TAKEOFF: _handle_TAKEOFF,
         MissionState.RACING: _handle_RACING,
         MissionState.RECALL: _handle_RECALL,
         MissionState.LAND_NOW: _handle_LAND_NOW,
@@ -287,19 +285,36 @@ class MissionStateMachine:
         MissionState.ABORTED: _handle_ABORTED,
     }
 
+    # ---- RACING 判定（保持 handler 主体一行一事）----
+
+    def _manual_takeover(self):
+        """OFFBOARD 丢失 = 遥控/地面站接管（不替人做降落决策）"""
+        return self.mode not in ('OFFBOARD', 'AUTO.LAND')
+
+    def _timeout_reason(self):
+        """超时/无进展保护（均可参数禁用）；超时返回原因串，否则空串"""
+        if self.takeoff_time is None:
+            return ''
+        if self.mission_timeout > 0.0 and \
+                (rospy.Time.now() - self.takeoff_time).to_sec() > self.mission_timeout:
+            return 'mission timeout %.0fs' % self.mission_timeout
+        if self.no_progress_timeout > 0.0 and self.last_progress_time is not None and \
+                (rospy.Time.now() - self.last_progress_time).to_sec() > self.no_progress_timeout:
+            return 'no progress for %.0fs' % self.no_progress_timeout
+        return ''
+
     # ---------------- 行为原语 ----------------
 
     def try_commit(self):
-        """锁定稳定 + 距框进入提交窗 → 冻结框参数直穿（方案A §4.4）"""
+        """锁定稳定 + 距框进入 [commit_min, commit_max] → 冻结框参数直穿"""
         if not self.commit_enabled or self.state != MissionState.RACING:
             return
         if not self.detector_locked or self.pos is None or self.frame_center is None:
             return
         if self.frame_msg_time is None or (rospy.Time.now() - self.frame_msg_time).to_sec() > 1.0:
             return  # stable_frame 太旧，可能已解锁
-        # 已提交过这个框（距提交中心 <1.5 m 视为同一框），穿越完成后才允许提交下一个
         if self.commit_frame is not None and dist2d(self.commit_frame, self.frame_center) < 1.5:
-            return
+            return  # 已提交过这个框（距提交中心 <1.5 m 视为同一框）
         d = dist3d(self.pos, self.frame_center)
         if not (self.commit_min_dist <= d <= self.commit_max_dist):
             return
@@ -320,9 +335,9 @@ class MissionStateMachine:
             rospy.logwarn('mission_state: commit_crossing call failed: %s', e)
 
     def try_search_nudge(self):
-        """穿越计数停滞且失锁 → 发短距探路点改变观察几何（侧视方框是窄线、近环
-        点云稀疏，悬停等不来有效锁定；锁定抖动会不停重置"无锁计时"，故以 done
-        停滞为触发）。探点绕当前位置 60° 步进旋转，高度夹在 [1.2, 2.6] m。"""
+        """计数停滞且失锁 → 发短距探路点改变观察几何。探点绕当前位置 60° 步进
+        旋转，高度夹在 [1.2, 2.6] m。以 done 停滞（而非无锁计时）为触发——
+        锁定抖动会不停重置无锁计时"""
         if not self.search_nudge_enabled or self.pos is None or self.takeoff_time is None:
             return
         if self.detector_frozen:
@@ -362,7 +377,8 @@ class MissionStateMachine:
         return goal
 
     def call_land(self):
-
+        """请求降落：优先 se3 的 /land 服务；不存在（如 ctrl_v1 链）则直接调
+        mavros set_mode 切 AUTO.LAND"""
         if self._land_service is None:
             try:
                 rospy.wait_for_service('/land', timeout=0.5)
@@ -400,7 +416,7 @@ class MissionStateMachine:
     # ---------------- 飞行状态推断 ----------------
 
     def flying(self):
-        """飞行中判定：se3 链看 /flight_state；无 se3（ctrl_v1 链）按 mavros 状态推断"""
+        """飞行中判定：se3 链看 /flight_state；无 se3（ctrl_v1 链）按 mavros 推断"""
         if self.flight_state in (FS_TAKEOFF, FS_MISSION):
             return True
         return (self.armed and self.mode == 'OFFBOARD' and self.pos is not None
@@ -415,7 +431,7 @@ class MissionStateMachine:
     def spin(self):
         rate = rospy.Rate(5)
         while not rospy.is_shutdown():
-            # se3/飞控已进入收尾（围栏、传感器断流、人工切 AUTO.LAND）：任务停手跟随
+            # se3/飞控已进入收尾（围栏、断流、人工切 AUTO.LAND）：任务停手跟随
             if self.state not in (MissionState.LAND_NOW, MissionState.DONE, MissionState.ABORTED):
                 if self.flight_state in (FS_LANDING, FS_LANDED, FS_EMERGENCY) or self.mode == 'AUTO.LAND':
                     self.finish_reason = self.finish_reason or 'se3 landing already active'

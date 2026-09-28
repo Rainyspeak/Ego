@@ -17,6 +17,15 @@ namespace ego_planner
     nh.param("optimization/dist0", dist0_, -1.0);
     nh.param("optimization/max_vel", max_vel_, -1.0);
     nh.param("optimization/max_acc", max_acc_, -1.0);
+    // 规划加速度裕度：优化可行性按 a×margin 执行（<1 = 样条拉伸——转角半径
+    // 下限 R≥v²/(margin·a) 被动放大）。实机跟踪贴着 a_max 规划的紧弧很勉强
+    //（仿真跟得上是高动力学假象），规划留裕度、控制器能力不变（2026-09-28
+    // 用户"拐弯弧度太小，从 B 样条拉伸入手"）
+    double acc_margin = 1.0;
+    nh.param("optimization/acc_margin", acc_margin, 1.0);
+    if (max_acc_ > 0.0) {
+      max_acc_ *= std::max(0.1, std::min(1.0, acc_margin));
+    }
 
     nh.param("optimization/order", order_, 3);
   }

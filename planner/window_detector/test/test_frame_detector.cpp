@@ -921,6 +921,67 @@ static void t39_skewed_short_arc_refined() {
          fmt("st=%s cerr=%.3f ang=%.1f", detectStatusToString(st), cerr, ang));
 }
 
+
+// ---- 预测模型（Holt 阻尼趋势，2026-09-28）----
+
+static void t40_prediction_convergence() {
+  // 收敛序列：真实框心固定在 c_true，锁定后观测从偏差位置逐帧收敛
+  //（模拟锁定初期斜视角拟合的中心滑动）。趋势预测应比纯 EMA 提前贴到真值，
+  // 且三航点保持组刚性（P1/P3 与 c 距离 = approach/exit）
+  const Vec3 c_true = {{4.0, 1.0, 1.5}};
+  const Vec3 n = {{1, 0, 0}};
+  StabilizerParams sp_ema;                       // beta=0 纯 EMA 基线
+  StabilizerParams sp_holt = sp_ema;
+  sp_holt.trend_beta = 0.3;
+  sp_holt.trend_damping = 0.85;
+  FrameStabilizer s_ema(sp_ema), s_holt(sp_holt);
+  Vec3 c_est = c_true + vec3(0, 0, -1.0);        // 初始偏 1 m
+  for (int i = 0; i < 8; ++i) {
+    const FrameDetection d = makeDet(c_est, n, 1.0, 1.0);
+    s_ema.onDetection(d);
+    s_holt.onDetection(d);
+    c_est = c_true + (c_est - c_true) * 0.6;     // 观测每帧向真值收敛
+  }
+  const double e_ema = norm(s_ema.frame().center - c_true);
+  const double e_holt = norm(s_holt.frame().center - c_true);
+  report(s_holt.locked() && e_holt < e_ema,
+         "T40 holt converges faster than ema",
+         fmt("e_ema=%.3f e_holt=%.3f", e_ema, e_holt));
+  const auto wps = s_holt.waypoints();
+  const FrameDetection& f = s_holt.frame();
+  const bool rigid = norm(wps[0] - (f.center - f.normal * sp_holt.approach_dist)) < 1e-9 &&
+                     norm(wps[1] - f.center) < 1e-9 &&
+                     norm(wps[2] - (f.center + f.normal * sp_holt.exit_dist)) < 1e-9;
+  report(rigid, "T40b waypoints stay group-rigid under prediction", "");
+}
+
+static void t41_prediction_degenerates_and_residual() {
+  // beta=0 分支与旧 EMA 逐位一致；beta>0 时一步预测残差可获取且收敛后趋小
+  const Vec3 c = {{2.0, 0.0, 1.0}};
+  const Vec3 n = {{0, 1, 0}};
+  FrameStabilizer s_ref, s_off;                  // 两者都 beta=0
+  for (int i = 0; i < 5; ++i) {
+    s_ref.onDetection(makeDet(c, n, 1.0, 1.0));
+    s_off.onDetection(makeDet(c, n, 1.0, 1.0));
+  }
+  s_ref.onDetection(makeDet(c + vec3(0.1, 0, 0), n, 1.0, 1.0));
+  s_off.onDetection(makeDet(c + vec3(0.1, 0, 0), n, 1.0, 1.0));
+  const bool identical = norm(s_ref.frame().center - s_off.frame().center) < 1e-12;
+  report(identical, "T41 beta=0 identical to legacy ema", "");
+
+  StabilizerParams sp = s_off.params();
+  sp.trend_beta = 0.3;
+  FrameStabilizer s_h(sp);
+  for (int i = 0; i < 5; ++i) s_h.onDetection(makeDet(c, n, 1.0, 1.0));  // 锁定（SEARCHING 分支无预测）
+  s_h.onDetection(makeDet(c + vec3(0.2, 0, 0), n, 1.0, 1.0));            // 锁后首帧：一步预测残差生效
+  const double r0 = s_h.lastPredResidual();
+  for (int i = 0; i < 10; ++i) s_h.onDetection(makeDet(c, n, 1.0, 1.0));  // 静止真值
+  const double r1 = s_h.lastPredResidual();
+  report(r0 >= 0.0 && r0 < 0.3 && r1 < 0.02,
+         "T41b pred residual available and shrinks on steady target",
+         fmt("r0=%.3f r1=%.4f", r0, r1));
+}
+
 int main() {
   t1_ideal();
   t2_noise_outliers();
@@ -957,6 +1018,8 @@ int main() {
   t37_oblique_ring();
   t38_steep_oblique_ring();
   t39_skewed_short_arc_refined();
+  t40_prediction_convergence();
+  t41_prediction_degenerates_and_residual();
   std::printf("\n%d passed, %d failed\n", g_pass, g_fail);
   return g_fail == 0 ? 0 : 1;
 }

@@ -30,13 +30,15 @@ PathManager::PathManager() : nh_(), pnh_("~") {
   pnh_.param<double>("min_enqueue_spacing", min_enqueue_spacing_, 0.5);
   pnh_.param<double>("batch_match_dist", batch_match_dist_, 1.2);
   pnh_.param<double>("enqueued_match_dist", enqueued_match_dist_, 1.2);
-  pnh_.param("validate_before_enqueue", validate_before_enqueue_, true);
-  pnh_.param("validate_count", validate_count_, 2);
-  pnh_.param("validate_match_dist", validate_match_dist_, 0.4);
+  pnh_.param("enqueue_verify", enqueue_verify_, true);
+  pnh_.param("enqueue_verify_count", enqueue_verify_count_, 2);
+  pnh_.param("enqueue_retract_dist", enqueue_retract_dist_, 2.0);
+  pnh_.param("enqueue_retract_time", enqueue_retract_time_, 3.0);
   pnh_.param<double>("reach_fallback_dist", reach_fallback_dist_, 0.5);
-  pnh_.param<double>("center_lookahead", center_lookahead_, 2.0);
+  pnh_.param<double>("center_lookahead", center_lookahead_, center_lookahead_);
   pnh_.param<double>("center_gate_window", center_gate_window_, 0.0);
   pnh_.param<double>("center_match_dist", center_match_dist_, 1.0);
+  pnh_.param("p1_lookahead", p1_lookahead_, 2.5);
   pnh_.param<double>("lookahead_speed_gain", lookahead_speed_gain_, 0.0);
   pnh_.param<int>("max_queue_size", max_queue_size_, 0);
   pnh_.param<double>("tail_extrapolate_max", tail_extrapolate_max_, 0.0);
@@ -47,11 +49,13 @@ PathManager::PathManager() : nh_(), pnh_("~") {
   min_enqueue_spacing_ = std::max(min_enqueue_spacing_, 0.0);
   batch_match_dist_ = std::max(batch_match_dist_, 0.0);
   enqueued_match_dist_ = std::max(enqueued_match_dist_, 0.0);
-  validate_count_ = std::max(validate_count_, 1);
-  validate_match_dist_ = std::max(validate_match_dist_, 0.05);
+  enqueue_verify_count_ = std::max(enqueue_verify_count_, 1);
+  enqueue_retract_dist_ = std::max(enqueue_retract_dist_, 0.5);
+  enqueue_retract_time_ = std::max(enqueue_retract_time_, 0.5);
   reach_fallback_dist_ = std::max(reach_fallback_dist_, 0.0);
   center_lookahead_ = std::max(center_lookahead_, 0.0);
   center_match_dist_ = std::max(center_match_dist_, 0.0);
+  p1_lookahead_ = std::max(p1_lookahead_, 0.0);
   lookahead_speed_gain_ = std::max(lookahead_speed_gain_, 0.0);
   max_queue_size_ = std::max(max_queue_size_, 0);
   tail_extrapolate_max_ = std::max(tail_extrapolate_max_, 0.0);
@@ -187,6 +191,10 @@ void PathManager::enqueueBatch(const nav_msgs::Path& batch) {
       }
       rebuildLengths();
       has_path_ = true;
+      // 队尾精化 = 对本组的确认观测（后置二次校验计数）
+      ++last_group_hits_;
+      last_group_.poses = batch.poses;
+      last_group_stamp_ = ros::Time::now();
       ROS_INFO_STREAM_THROTTLE(2.0, "[path_manager] 批量入队：队尾 " << k
                                 << " 点原位更新");
       return;
@@ -198,14 +206,42 @@ void PathManager::enqueueBatch(const nav_msgs::Path& batch) {
       return;
     }
   }
-  // 新框二次校验闸门（含首框）：连续一致观测确认后才入队，未确认挂起等待
-  if (validate_before_enqueue_ && !validateNewFrame(batch)) {
-    return;
+  // ---- 新组乐观入列（零延迟，流畅优先）+ 未确认组发散撤销（后置二次校验）----
+  // 上一组入列后尚未被队尾精化确认（hits < verify_count），而本批次与它
+  // 逐点全远离 ≥ retract_dist（不是同框重观测）且在撤销窗口内 → 上一组按
+  // 幻影整组移除（只发生在队尾，进度投影只进不退可越过短暂回撤）
+  const ros::Time now = ros::Time::now();
+  if (enqueue_verify_ && last_group_hits_ > 0 &&
+      last_group_hits_ < static_cast<size_t>(std::max(1, enqueue_verify_count_)) &&
+      last_group_.poses.size() == batch.poses.size() &&
+      (now - last_group_stamp_).toSec() < enqueue_retract_time_ &&
+      path_.poses.size() >= last_group_.poses.size() &&
+      (toVec3(path_.poses.back().pose.position) -
+       toVec3(last_group_.poses.back().pose.position)).norm() < 1e-6) {
+    bool far = true;
+    for (size_t i = 0; i < batch.poses.size(); ++i) {
+      if ((toVec3(batch.poses[i].pose.position) -
+           toVec3(last_group_.poses[i].pose.position)).norm() <= enqueue_retract_dist_) {
+        far = false;
+        break;
+      }
+    }
+    if (far) {
+      path_.poses.erase(path_.poses.end() - last_group_.poses.size(), path_.poses.end());
+      rebuildLengths();
+      ROS_WARN("[path_manager] 二次校验撤销：上一组（未确认 %zu 点）与新组远离 ≥ %.1f m，按幻影移除",
+               last_group_.poses.size(), enqueue_retract_dist_);
+      last_group_hits_ = 0;
+      last_group_.poses.clear();
+    }
   }
   const size_t before = path_.poses.size();
   for (const geometry_msgs::PoseStamped& p : batch.poses) {
     appendToMission(p);
   }
+  last_group_.poses = batch.poses;
+  last_group_hits_ = 1;
+  last_group_stamp_ = now;
   ROS_INFO_STREAM_THROTTLE(2.0, "[path_manager] 批量入队：" << n << " 点追加，队列 "
                             << before << " -> " << path_.poses.size() << " 点");
 }
@@ -268,52 +304,6 @@ bool PathManager::revalidateEnqueued(const nav_msgs::Path& batch) {
                               << (inserted > 0 ? "，缺员补插 " + std::to_string(inserted) + " 点" : "")
                               << "），不重复追加，队列 " << path_.poses.size() << " 点");
   return true;
-}
-
-// 新框二次校验闸门（validateNewFrame）：过队尾匹配与已入列校验后，批次是
-// "未见过的框"——高速下平面拟合的中心滑动/单帧野值（幻影平面）正是以新框
-// 面目出现的，直接入队会污染引导路径（carrot 被拽向幻影）。闸门要求连续
-// validate_count 次观测逐点一致（≤ validate_match_dist，锁定 EMA 的正常帧间
-// 抖动远小于该值）才确认；确认即直接入队，只多等 ~1 个检测周期（10 Hz 下
-// 0.1 s × (count-1)）。候选跳变（超阈值）= 估计不稳 → 替换候选重新计数；
-// 挂起候选 2 s 无新观测过期作废。已入列组的 EMA 精化走队尾原位更新路径，
-// 不经过本闸门——live-following 语义保留。
-bool PathManager::validateNewFrame(const nav_msgs::Path& batch) {
-  const ros::Time now = ros::Time::now();
-  if (pending_hits_ > 0 && !pending_stamp_.isZero() &&
-      (now - pending_stamp_).toSec() > 2.0) {
-    pending_hits_ = 0;  // 检测中断后的旧候选不能当新框的确认依据
-    pending_batch_.poses.clear();
-  }
-
-  bool match = pending_hits_ > 0 && pending_batch_.poses.size() == batch.poses.size();
-  if (match) {
-    for (size_t i = 0; i < batch.poses.size(); ++i) {
-      if ((toVec3(batch.poses[i].pose.position) -
-           toVec3(pending_batch_.poses[i].pose.position)).norm() > validate_match_dist_) {
-        match = false;
-        break;
-      }
-    }
-  }
-  if (match) {
-    ++pending_hits_;
-    pending_batch_.poses = batch.poses;  // 跟随最新观测（慢漂移下确认值是新的）
-  } else {
-    pending_batch_ = batch;  // 首个观测或跳变替换：重新计数
-    pending_hits_ = 1;
-    ROS_INFO_STREAM_THROTTLE(2.0, "[path_manager] 二次校验：新框候选登记 ("
-                              << batch.poses.size() << " 点)，等待确认");
-  }
-  pending_stamp_ = now;
-
-  if (pending_hits_ >= static_cast<size_t>(validate_count_)) {
-    pending_hits_ = 0;
-    pending_batch_.poses.clear();
-    ROS_INFO("[path_manager] 二次校验通过：新框 %zu 点直接入队", batch.poses.size());
-    return true;  // 校验完成 → 调用方直接入队
-  }
-  return false;
 }
 
 // 3D 容器内距 p 最近且距离 ≤ enqueued_match_dist_ 的航点下标（跳过 skip 中
@@ -428,6 +418,8 @@ void PathManager::setMission(const nav_msgs::Path& mission) {
   cumulative_lengths_.clear();
   complete_ = false;
   inside_since_ = ros::Time();
+  last_group_hits_ = 0;  // 撤销状态不跨任务（防对新任务误撤）
+  last_group_.poses.clear();
 
   if (path_.poses.empty()) {
     has_path_ = false;
@@ -594,24 +586,17 @@ void PathManager::timerCallback(const ros::TimerEvent&) {
     inside_since_ = ros::Time();
   }
 
-  // ---- 框心硬化（连续自适应前视，MPCC lag/contour 思想的工程落地）----
-  // 未越过的框心把有效 lookahead 从全量沿"距框心剩余弧长"线性收窄到下限：
-  // carrot 沿 P1→框心→P3 穿心轴逐段推进，引导线贴轴，不被大 lookahead 一步
-  // 跳过穿心段而离轴切角。连续斜坡替代旧版"进窗口即硬切 center_lookahead"
-  // 的阶梯逻辑（进窗瞬间 5.0→2.0 单帧跳变，carrot 目标突退数米，EGO 被迫
-  // 重规划）。下限随速度抬升：刹车距离 v²/2a 随速度增长，固定下限在高速时
-  // 会把 carrot 压进减速区（纯跟踪经典 L=k·v+L0，k=lookahead_speed_gain，
-  // 0=固定下限）。越过框心 0.5 m 即恢复全量加速（不为平滑牺牲出框加速）。
-  // 非"必须经过"的到点语义：carrot 始终在前（下限 > 刹车距离），不停、不
-  // 访问。框心落到机后仍未越过（漏过）：放行告警，绝不回拽
+  // ---- 框心记账 + 可选前视约束 ----
+  // 记账循环必须无条件跑：越过/漏过框心的 passed 翻转与 frame_count 穿越
+  // 计数（RECALL 触发依赖）寄生在此，与约束开关解耦。约束部分默认关闭
+  //（2026-09-28 用户确认回归无约束长轨迹跟随——纯 lookahead 沿队引导，
+  // 效果好且流畅；要恢复贴轴/对准约束传 _center_lookahead > 0）
   double lookahead_eff = lookahead_;
-  if (center_lookahead_ > 0.0 && !centers_.empty()) {
-    const double span = std::max(center_gate_window_ > 0.0 ? center_gate_window_ : lookahead_ + 1.0, 0.5);
-    // twist.linear 是 Vector3（toVec3 只吃 Point）；模长对体/世界系旋转不变
-    const geometry_msgs::Vector3& w = odom_.twist.twist.linear;
-    const double v = std::sqrt(w.x * w.x + w.y * w.y + w.z * w.z);
-    const double floor_lo = std::min(center_lookahead_ + lookahead_speed_gain_ * v, lookahead_);
+  if (!centers_.empty()) {
     double d_min = std::numeric_limits<double>::infinity();
+    double nearest_center_prog = 0.0;
+    Eigen::Vector3d nearest_center = Eigen::Vector3d::Zero();
+    bool has_nearest = false;
     for (CenterEntry& ce : centers_) {
       if (ce.passed) {
         continue;
@@ -624,11 +609,44 @@ void PathManager::timerCallback(const ros::TimerEvent&) {
         publishFrameCount();  // 穿越计数 +1（越过已登记框心）
         continue;
       }
-      d_min = std::min(d_min, std::fabs(proj.progress - closest.progress));
+      const double d = std::fabs(proj.progress - closest.progress);
+      if (d < d_min) {
+        d_min = d;
+        nearest_center_prog = proj.progress;
+        nearest_center = ce.point;
+        has_nearest = true;
+      }
     }
-    if (d_min < span) {
-      const double t = std::max(0.0, std::min(1.0, d_min / span));
-      lookahead_eff = floor_lo + (lookahead_ - floor_lo) * t;
+    if (center_lookahead_ > 0.0) {
+      // ---- 连续自适应前视（框心锚 + P1 锚，可选开）----
+      const double span = std::max(center_gate_window_ > 0.0 ? center_gate_window_ : lookahead_ + 1.0, 0.5);
+      // twist.linear 是 Vector3（toVec3 只吃 Point）；模长对体/世界系旋转不变
+      const geometry_msgs::Vector3& w = odom_.twist.twist.linear;
+      const double v = std::sqrt(w.x * w.x + w.y * w.y + w.z * w.z);
+      const double floor_lo = std::min(center_lookahead_ + lookahead_speed_gain_ * v, lookahead_);
+      if (d_min < span) {
+        const double t = std::max(0.0, std::min(1.0, d_min / span));
+        lookahead_eff = floor_lo + (lookahead_ - floor_lo) * t;
+      }
+      // ---- P1 对准锚：只锚框心时 carrot 在距 P1 数米处就越过 P1 直奔框心，
+      // EGO 斜切、转弯压到框前才发生；同一斜坡也锚到本组 P1（队列中框心
+      // 槽位的前一点），距 P1 就开始收窄——carrot 贴着入 P1 的路径段引导，
+      // 转弯提前 ----
+      if (has_nearest && p1_lookahead_ > 0.0 && !path_.poses.empty()) {
+        const size_t slot = nearestEnqueuedIndex(nearest_center, std::vector<size_t>());
+        if (slot != kNoSlot && slot > 0) {
+          const double p1_prog = closestPointOnPath(toVec3(path_.poses[slot - 1].pose.position)).progress;
+          const double gap = nearest_center_prog - p1_prog;
+          if (gap > 0.0 && gap < 3.5) {
+            const double d_p1 = p1_prog - closest.progress;
+            if (d_p1 < span) {
+              const double t1 = std::max(0.0, std::min(1.0, d_p1 / span));
+              const double floor_p1 = std::min(p1_lookahead_, lookahead_);
+              lookahead_eff = std::min(lookahead_eff, floor_p1 + (lookahead_ - floor_p1) * t1);
+            }
+          }
+        }
+      }
     }
   }
 

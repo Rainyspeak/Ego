@@ -12,7 +12,7 @@
        fsm/planning_horizon（sim 为 3.5）。window_detector 的单点 goal 在
        path_manager 里逐条替换任务，等效透传；往 /path_manager/path 发整条
        nav_msgs/Path 即可执行多航点任务 -->
-  <arg name="lookahead_distance" default="4.0"/>
+  <arg name="lookahead_distance" default="3.5"/>
   <!-- se3 保护参数：地理围栏半宽/高度上限（超出触发保护降落）、规划器指令
        新鲜度（静默超时判 PLANNER_LOST；0.05 为仿真值，实机 0.01） -->
   <arg name="geo_fence_x" default="20"/>
@@ -32,6 +32,9 @@
     <arg name="odom_topic" value="$(arg odom_topic)"/>
     <arg name="max_vel" value="1.0"/>
     <arg name="max_acc" value="1.0"/>
+    <!-- B样条拉伸：规划可行性按 0.8 m/s² 执行（转角半径下限 1→1.25 m@1m/s），
+         控制器能力仍 1.0——实机跟踪贴 a_max 的紧弧勉强，规划留裕度 -->
+    <arg name="plan_acc_ratio" value="0.8"/>
     <arg name="lookahead_distance" value="$(arg lookahead_distance)"/>
   </include>
 

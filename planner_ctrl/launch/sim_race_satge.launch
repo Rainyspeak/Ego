@@ -5,13 +5,13 @@
   -->
   <arg name="start_rviz" default="true"/>
   <arg name="goal_z" default="-1.0"/>
-  <arg name="goal_exit_dist" default="0.8"/>
+  <arg name="goal_exit_dist" default="0.6"/>
   <arg name="enable_skeleton" default="true"/>
   <!-- path_manager carrot 前视距离（传给 path_snap.launch）：建议 ≥
        fsm/planning_horizon（sim 为 3.5）。window_detector 的单点 goal 在
        path_manager 里逐条替换任务，等效透传；往 /path_manager/path 发整条
        nav_msgs/Path 即可执行多航点任务 -->
-  <arg name="lookahead_distance" default="4.0"/>
+  <arg name="lookahead_distance" default="3.5"/>
   <!-- se3 保护参数：地理围栏半宽/高度上限（超出触发保护降落）、规划器指令
        新鲜度（静默超时判 PLANNER_LOST；0.05 为仿真值，实机 0.01） -->
   <arg name="geo_fence_x" default="20"/>
@@ -21,7 +21,7 @@
   <!-- 最后一个航点（返航终点）：手动指定，默认 (0, 0) -->
   <arg name="home_x" default="0.0"/>
   <arg name="home_y" default="0.0"/>
-  <arg name="home_z" default="1.2"/>
+  <arg name="home_z" default="1.0"/>
 
   <include file="$(find ego_planner)/launch/path_snap.launch">
     <arg name="start_rviz" value="$(arg start_rviz)"/>
