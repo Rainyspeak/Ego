@@ -14,6 +14,7 @@
   <arg name="voxel_leaf_size" value="0.15"/>
   <!-- B样条拉伸（规划加速度裕度）：优化可行性按 a×ratio 执行，实机默认 0.8
        （转角半径被动拉大，控制器能力不变）；1.0 = 旧行为 -->
+  <arg name="lookahead_distance" default="3.0"/>
   <arg name="plan_acc_ratio" default="0.75"/>
   <arg name="start_waypoint_generator" default="true"/>
   <arg name="start_rviz" default="true"/>
@@ -93,12 +94,25 @@
     <param name="traj_server/time_forward" value="1.0" type="double"/>
   </node>
 
-  <node pkg="waypoint_generator" name="waypoint_generator" type="waypoint_generator"
+  <!--<node pkg="waypoint_generator" name="waypoint_generator" type="waypoint_generator"
       output="screen" if="$(arg start_waypoint_generator)">
     <remap from="~odom" to="$(arg odom_topic)"/>
     <remap from="~goal" to="/move_base_simple/goal"/>
     <remap from="~traj_start_trigger" to="/traj_start_trigger"/>
     <param name="waypoint_type" value="manual-lonely-waypoint"/>
+  </node>-->
+  <node pkg="path_manager" type="path_ctrl" name="path_ctrl" output="screen">
+    <param name="goal_topic" value="/move_base_simple/goal"/>
+    <param name="path_topic" value="/path_manager/path"/>
+    <param name="goal_path_topic" value="/waypoint_generator/waypoints"/>
+    <param name="odom_topic" value="$(arg odom_topic)"/>
+    <param name="lookahead_distance" value="$(arg lookahead_distance)"/>
+    <!-- 长轨迹 出现进框前拖速，把 center_gate_window 收到 2.0 或 center_lookahead置 0 关闭 -->
+    <param name="center_lookahead" value="1.5"/>
+    <param name="center_gate_window" value="2.0"/>
+    <!-- 队尾外推：检测丢失/下一框未入列时沿末段方向继续前移（继续飞行等待
+         后续航点入列），走到外推上限才收尾停发；0 = 关闭（到队尾即停） -->
+    <param name="tail_extrapolate_max" value="$(arg tail_extrapolate_max)"/>
   </node>
 
   <node pkg="odom_visualization" name="odom_visualization" type="odom_visualization" output="screen">

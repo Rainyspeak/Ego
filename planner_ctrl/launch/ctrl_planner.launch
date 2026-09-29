@@ -1,17 +1,14 @@
 <launch>
-  <!-- ctrl_v1 速度 PID + 位置反馈控制器（直接订阅 /planner_cmd，无需 planner_adapter）
-       实机：odom_topic 默认 /Odometry（FAST-LIO）
-       仿真：odom_topic:=/mavros/local_position/odom（否则里程计回调不触发，
-             飞机悬停在起飞高度永远不进规划跟踪） -->
+
   <arg name="odom_topic" default="/Odometry"/>
   <arg name="takeoff_height" default="1.0"/>
   <arg name="pid_enabled" default="true"/>
-  <arg name="pid_kp" default="1.3"/>
+  <arg name="pid_kp" default="0.35"/>
   <arg name="pid_ki" default="0.0"/>
   <arg name="pid_kd" default="0.0"/>
   <arg name="pid_integral_limit" default="1.0"/>
   <arg name="pid_output_limit" default="1.5"/>
-  <arg name="position_kp" default="0.8"/>
+  <arg name="position_kp" default="0.35"/>
   <arg name="position_error_limit" default="1.0"/>
 
   <node pkg="planner_ctrl" name="ctrl_v1" type="ctrl_v1" output="screen">

@@ -1,44 +1,40 @@
 <launch>
-  <!-- 实机链（trace_stage）：里程计 = fastlio /Odometry（全链统一：EGO/grid_map、
-       window_detector、path_manager、se3 控制器、mission_state）；
-       动力学 max_vel/max_acc = 1.0/1.0 m(/s²)；起飞高度 1.0 m。
-       覆盖项：goal_z:=1.0（固定高度替代默认跟随检测框心）、start_rviz:=false（无界面）
-  -->
+
   <arg name="start_rviz" default="true"/>
   <arg name="goal_z" default="-1.0"/>
-  <arg name="goal_exit_dist" default="0.8"/>
+  <arg name="goal_exit_dist" default="0.6"/>
   <arg name="enable_skeleton" default="true"/>
   <!-- path_manager carrot 前视距离（传给 path_snap.launch）：建议 ≥
        fsm/planning_horizon（sim 为 3.5）。window_detector 的单点 goal 在
        path_manager 里逐条替换任务，等效透传；往 /path_manager/path 发整条
        nav_msgs/Path 即可执行多航点任务 -->
   <arg name="lookahead_distance" default="3.5"/>
+
   <!-- se3 保护参数：地理围栏半宽/高度上限（超出触发保护降落）、规划器指令
        新鲜度（静默超时判 PLANNER_LOST；0.05 为仿真值，实机 0.01） -->
-  <arg name="geo_fence_x" default="20"/>
+  <!--<arg name="geo_fence_x" default="20"/>
   <arg name="geo_fence_y" default="20"/>
   <arg name="geo_fence_z" default="4.5"/>
-  <arg name="msg_expire_time" default="0.01"/>
+  <arg name="msg_expire_time" default="0.01"/>-->
 
-  <!-- 里程计：fastlio 输出（实机链全链统一来源） -->
   <arg name="odom_topic" default="/Odometry"/>
   <arg name="takeoff_height" default="1.0"/>
   <!-- 最后一个航点（返航终点）：手动指定，默认 (0, 0)，高度=起飞高度 -->
   <arg name="home_x" default="0.0"/>
   <arg name="home_y" default="0.0"/>
 
-  <include file="$(find ego_planner)/launch/path_snap.launch">
+  <include file="$(find ego_planner)/launch/mid360.launch">
     <arg name="start_rviz" value="$(arg start_rviz)"/>
     <arg name="odom_topic" value="$(arg odom_topic)"/>
     <arg name="max_vel" value="0.8"/>
     <arg name="max_acc" value="1.0"/>
     <!-- B样条拉伸：规划可行性按 0.8 m/s² 执行（转角半径下限 1→1.25 m@1m/s），
          控制器能力仍 1.0——实机跟踪贴 a_max 的紧弧勉强，规划留裕度 -->
-    <arg name="plan_acc_ratio" value="0.8"/>
+    <arg name="plan_acc_ratio" value="0.9"/>
     <arg name="lookahead_distance" value="$(arg lookahead_distance)"/>
   </include>
 
-  <include file="$(find window_detector)/launch/window_detector_sim.launch">
+  <include file="$(find window_detector)/launch/real.launch">
     <arg name="odom_topic" value="$(arg odom_topic)"/>
     <arg name="goal_z" value="$(arg goal_z)"/>
     <arg name="goal_exit_dist" value="$(arg goal_exit_dist)"/>
@@ -47,14 +43,14 @@
     <arg name="publish_path" value="true"/>
   </include>
 
-  <include file="$(find planner_ctrl)/launch/ctrl_se3_hof.launch">
+  <!--<include file="$(find planner_ctrl)/launch/ctrl_se3_hof.launch">
     <arg name="odom_topic" value="$(arg odom_topic)"/>
     <arg name="takeoff_height" value="$(arg takeoff_height)"/>
     <arg name="geo_fence_x" value="$(arg geo_fence_x)"/>
     <arg name="geo_fence_y" value="$(arg geo_fence_y)"/>
     <arg name="geo_fence_z" value="$(arg geo_fence_z)"/>
     <arg name="msg_expire_time" value="$(arg msg_expire_time)"/>
-  </include>
+  </include>-->
 
   <!-- ctrl_v1  -->
   <!--<include file="$(find planner_ctrl)/launch/ctrl_planner.launch">
@@ -68,8 +64,7 @@
     <param name="odom_topic" value="$(arg odom_topic)"/>
     <param name="target_frames" value="3"/>
     <param name="total_frames" value="3"/>
-    <!-- 最后一个航点：手动指定（home_x/home_y 顶层 arg，默认 0,0），高度=起飞高度；
-         无自动降落：RECALL 到位后悬停，遥控器切 POSITION 接管 -->
+    <!-- 最后一个航点：手动指定（home_x/home_y 顶层 arg，默认 0,0），高度=起飞高度-->
     <param name="home_x" value="$(arg home_x)"/>
     <param name="home_y" value="$(arg home_y)"/>
     <param name="home_z" value="$(arg takeoff_height)"/>
