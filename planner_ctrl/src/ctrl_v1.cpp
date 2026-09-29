@@ -15,7 +15,10 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include "planner_ctrl/Pidparam.hpp"
 
+#include <Eigen/Dense>
 
+
+Eigen::Vector3d ego_pos, ego_vel, ego_acc;  // yaw 为标量，见下方 ego_yaw/ego_yaw_rate
 
 #define POSITION_CONTROL 0b100111111000   //位置起飞：使用PX/PY/PZ/YAW
 #define PLANNER_CONTROL 0b100111000000 //轨迹跟踪：使用位置、速度和YAW（加速度位被忽略）
@@ -36,7 +39,7 @@ float current_vel_x, current_vel_y, current_vel_z;
 // bool target_received = false;
 // bool waypoint_hold = false;
 bool odom_received = false;
-float ego_pos_x, ego_pos_y, ego_pos_z, ego_vel_x, ego_vel_y, ego_vel_z, ego_a_x, ego_a_y, ego_a_z, ego_yaw, ego_yaw_rate; //EGO planner information has position velocity acceleration yaw yaw_dot
+float ego_yaw, ego_yaw_rate; //EGO planner yaw/yaw_dot（标量）；位置速度加速度在 Eigen 向量 ego_pos/ego_vel/ego_acc
 bool receive = false;//触发轨迹的条件判断
 bool planner_timed_out = false;//规划器超时后原地悬停，等它重新规划
 constexpr double kPlannerTimeout = 0.05; // 50 ms 内未收到新指令即过期
@@ -54,11 +57,17 @@ double pid_integral_limit = planner_ctrl::PidParam::kIntegralLimit;
 double pid_output_limit = planner_ctrl::PidParam::kOutputLimit;
 double position_kp = planner_ctrl::PidParam::kPositionKp;
 double position_error_limit = planner_ctrl::PidParam::kPositionErrorLimit;
+// 加速度前馈超前时间(s)：v_cmd = v + a·τ 等价沿轨迹前视 τ 秒，抵消指令链路
+// 总滞后（规划延迟+控制离散+PX4 内环响应+机体动力学）；0 = 关闭。
+// 内环（角速率/姿态/速度）已标定良好，0.1 起步，滞后未消可加到 0.15~0.25
+double acc_ff_time = 0.1;
 
 struct Speed_limit
 {
   static constexpr double kControlRate = 50.0; // 每 20 ms 检查
-  static constexpr double kSpeedLimit = 1.5;
+  // 绝对速度兜底（异常保护），须高于规划器 max_vel：实机 0.8 / 仿真 2.0，
+  // 取 3.0 正常不触发；正常工况的速度约束由规划器 max_vel 负责
+  static constexpr double kSpeedLimit = 3.0;
 
   static void limitVelocityNorm(double &vx, double &vy, double &vz, double max_speed)
   {
@@ -221,24 +230,25 @@ mavros_msgs::PositionTarget pose(const double& x, const double& y, const double&
 //   ROS_INFO("Received RViz waypoint: (%.2f, %.2f)", targetpos_x, targetpos_y);
 // }
 
-quadrotor_msgs::PositionCommand ego;
-void twist_planner_cb(const quadrotor_msgs::PositionCommand::ConstPtr& msg)//ego的回调函数
+quadrotor_msgs::PositionCommand ego_twist;
+void twist_planner_cb(const quadrotor_msgs::PositionCommand::ConstPtr& msg)
 {
     last_planner_receive_time = ros::SteadyTime::now();
+    ego_twist = *msg;
     receive = true;
     planner_timed_out = false;
-	  ego = *msg;
-    ego_pos_x = ego.position.x;
-    ego_pos_y = ego.position.y;
-    ego_pos_z = ego.position.z;
-    ego_vel_x = ego.velocity.x;
-    ego_vel_y = ego.velocity.y;
-    ego_vel_z = ego.velocity.z;
-    ego_a_x = ego.acceleration.x;
-    ego_a_y = ego.acceleration.y;
-    ego_a_z = ego.acceleration.z;
-    ego_yaw = ego.yaw;
-    ego_yaw_rate = ego.yaw_dot;
+    ego_pos(0) = ego_twist.position.x;
+    ego_pos(1) = ego_twist.position.y;
+    ego_pos(2) = ego_twist.position.z;
+    ego_vel(0) = ego_twist.velocity.x;
+    ego_vel(1) = ego_twist.velocity.y;
+    ego_vel(2) = ego_twist.velocity.z;
+    ego_acc(0) = ego_twist.acceleration.x;
+    ego_acc(1) = ego_twist.acceleration.y;
+    ego_acc(2) = ego_twist.acceleration.z;
+    ego_yaw = ego_twist.yaw;
+    ego_yaw_rate = ego_twist.yaw_dot;
+
 }
 
 //判断目标是否到达
@@ -318,44 +328,60 @@ void Planner_Control()
   current_goal.header.stamp = ros::Time::now();
   current_goal.type_mask = PLANNER_CONTROL;
 
-  current_goal.position.x = ego_pos_x;
-  current_goal.position.y = ego_pos_y;
-  current_goal.position.z = ego_pos_z;
+  current_goal.position.x = ego_pos(0);
+  current_goal.position.y = ego_pos(1);
+  current_goal.position.z = ego_pos(2);
 
-  double velocity_x = ego_vel_x;
-  double velocity_y = ego_vel_y;
-  double velocity_z = ego_vel_z;
+  double velocity_x = ego_vel(0);
+  double velocity_y = ego_vel(1);
+  double velocity_z = ego_vel(2);
+
+  // 加速度前馈：v(t+τ) ≈ v(t) + a·τ，指令提前 τ 秒到达，补相位滞后；
+  // 转弯/加减速段的跟踪刚度主要由这段提供（ego_acc 为 EGO 轨迹加速度，世界系）
+  velocity_x += acc_ff_time * ego_acc(0);
+  velocity_y += acc_ff_time * ego_acc(1);
+  velocity_z += acc_ff_time * ego_acc(2);
 
   // Position feedback: correct the planner feed-forward velocity using the
   // live odometry position before entering the velocity PID loop.
+  // 误差基准是 EGO 期望位置 ego_pos（Eigen 向量，回调里赋值）
   const double position_error_x = std::max(-position_error_limit,
                                            std::min(position_error_limit,
-                                                    static_cast<double>(ego_pos_x - position_x)));
+                                                    ego_pos(0) - position_x));
   const double position_error_y = std::max(-position_error_limit,
                                            std::min(position_error_limit,
-                                                    static_cast<double>(ego_pos_y - position_y)));
+                                                    ego_pos(1) - position_y));
   const double position_error_z = std::max(-position_error_limit,
                                            std::min(position_error_limit,
-                                                    static_cast<double>(ego_pos_z - position_z)));
+                                                    ego_pos(2) - position_z));
   velocity_x += position_kp * position_error_x;
   velocity_y += position_kp * position_error_y;
   velocity_z += position_kp * position_error_z;
   if (pid_enabled)
   {
     const ros::Time now = ros::Time::now();
-    velocity_x = velocity_pid.update(velocity_x, current_vel_x,
-                                     velocity_pid.integral_x,
-                                     velocity_pid.previous_error_x, now);
-    velocity_y = velocity_pid.update(velocity_y, current_vel_y,
-                                     velocity_pid.integral_y,
-                                     velocity_pid.previous_error_y, now);
-    velocity_z = velocity_pid.update(velocity_z, current_vel_z,
-                                     velocity_pid.integral_z,
-                                     velocity_pid.previous_error_z, now);
+    // pid_output_limit 只截断 PID 反馈修正量，不截断规划前馈——旧实现直接
+    // 限幅总输出，规划 max_vel 超过该值时前馈被削，产生系统性轨迹滞后
+    auto clamp = [](double v, double lim) {
+      return std::max(-lim, std::min(lim, v));
+    };
+    velocity_x += clamp(velocity_pid.update(velocity_x, current_vel_x,
+                                            velocity_pid.integral_x,
+                                            velocity_pid.previous_error_x, now) - velocity_x,
+                        pid_output_limit);
+    velocity_y += clamp(velocity_pid.update(velocity_y, current_vel_y,
+                                            velocity_pid.integral_y,
+                                            velocity_pid.previous_error_y, now) - velocity_y,
+                        pid_output_limit);
+    velocity_z += clamp(velocity_pid.update(velocity_z, current_vel_z,
+                                            velocity_pid.integral_z,
+                                            velocity_pid.previous_error_z, now) - velocity_z,
+                        pid_output_limit);
     velocity_pid.updateTime(now);
   }
+  // 绝对速度兜底（异常保护）：须高于规划器 max_vel，正常工况不触发
   Speed_limit::limitVelocityNorm(velocity_x, velocity_y, velocity_z,
-                                  pid_output_limit);
+                                  Speed_limit::kSpeedLimit);
   current_goal.velocity.x = velocity_x;
   current_goal.velocity.y = velocity_y;
   current_goal.velocity.z = velocity_z;
@@ -380,11 +406,13 @@ int main(int argc, char **argv)
   nh_.getParam("pid_output_limit", pid_output_limit);
   nh_.getParam("position_kp", position_kp);
   nh_.getParam("position_error_limit", position_error_limit);
+  nh_.getParam("acc_ff_time", acc_ff_time);
   nh_.getParam("takeoff_height", takeoff_height);
   pid_integral_limit = std::max(0.0, pid_integral_limit);
   pid_output_limit = std::max(0.1, pid_output_limit);
   position_kp = std::max(0.0, position_kp);
   position_error_limit = std::max(0.0, position_error_limit);
+  acc_ff_time = std::max(0.0, acc_ff_time);
   // ROS_INFO("Velocity PID: enabled=%s kp=%.3f ki=%.3f kd=%.3f integral_limit=%.3f output_limit=%.3f",
   //          pid_enabled ? "true" : "false", pid_kp, pid_ki, pid_kd,
   //          pid_integral_limit, pid_output_limit);
@@ -462,10 +490,9 @@ int main(int argc, char **argv)
 
     else
     {
-      // 起飞后等待：悬停在 (0, 0) 上方；规划器超时：保持锁定的原地悬停点
       if (!planner_timed_out)
         current_goal = pose(0, 0, takeoff_height, 0);
-      velocity_pid.reset();
+        velocity_pid.reset();
     }
 
     current_goal.header.stamp = ros::Time::now();

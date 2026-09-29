@@ -1,6 +1,5 @@
 // 移植自 OpenDrone(Tfly6, Gen3) se3_hopf/src/se3_ctrl.cpp
-// 话题接口：订阅 odom_topic(参数，默认 /mavros/local_position/odom；实机链用
-//           fastlio /Odometry)、/mavros/imu/data、/mavros/state、/planner/output；
+// 话题接口：订阅 /mavros/local_position/odom、/mavros/imu/data、/mavros/state、/planner/output；
 //           发布 /mavros/setpoint_raw/attitude、/flight_state；服务 /land、/mavros/set_mode、/mavros/cmd/arming
 #include "planner_ctrl/se3_hof_ctrl.h"
 #include "planner_ctrl/planner_output_utils.h"
@@ -15,9 +14,7 @@ Se3HofCtrl::Se3HofCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &private
     arming_client_ = nh_.serviceClient<mavros_msgs::CommandBool>("/mavros/cmd/arming");
     land_service_ = nh_.advertiseService("/land", &Se3HofCtrl::landCallback, this);
 
-    // 里程计来源参数化（订阅前先读）：仿真 mavros / 实机链 fastlio /Odometry
-    private_nh_.param<std::string>("odom_topic", odom_topic_, "/mavros/local_position/odom");
-    odom_sub_ = nh_.subscribe<nav_msgs::Odometry>(odom_topic_, 10, &Se3HofCtrl::OdomCallback, this);
+    odom_sub_ = nh_.subscribe<nav_msgs::Odometry>("/mavros/local_position/odom", 10, &Se3HofCtrl::OdomCallback, this);
     imu_sub_ = nh_.subscribe<sensor_msgs::Imu>("/mavros/imu/data", 10, &Se3HofCtrl::IMUCallback, this);
     state_sub_ = nh_.subscribe<mavros_msgs::State>("/mavros/state", 10, &Se3HofCtrl::StateCallback, this);
     plannerOutput_sub_ = nh_.subscribe<planner_ctrl::PlannerOutput>("/planner/output", 10, &Se3HofCtrl::plannerOutputCallback, this);
@@ -39,19 +36,12 @@ Se3HofCtrl::Se3HofCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &private
     private_nh_.param<double>("odom_vel_threshold", odom_vel_threshold_, 3.0);
     private_nh_.param<bool>("auto_takeoff", auto_takeoff_, true);
     private_nh_.param<double>("takeoff_height", takeoff_height_, 2.0);
-    private_nh_.param<double>("takeoff_speed", takeoff_speed_, 0.4);
-    if (takeoff_speed_ <= 0.0 || takeoff_speed_ > 2.0) {
-        takeoff_speed_ = 0.4;
-    }
     private_nh_.param<double>("geo_fence/x", geo_fence_[0], 10.0);
     private_nh_.param<double>("geo_fence/y", geo_fence_[1], 10.0);
     private_nh_.param<double>("geo_fence/z", geo_fence_[2], 4.0);
 
-    // 里程计速度系：mavros /local_position/odom 与 fastlio /Odometry(mainline) 的
-    // twist.linear 均为世界系(false)。仅当上游确实发布机体系速度时才置 true
-    // (feed 会左乘姿态转到世界系)。原硬编码 true 会在倾角大时把速度反馈向量错误旋转
-    private_nh_.param<bool>("enu_frame", enu_frame_, true);
-    private_nh_.param<bool>("vel_in_body", vel_in_body_, false);
+    enu_frame_ = true;
+    vel_in_body_ = true;
 
     init_pose_ << 0, 0, 0.5;
     flightState_ = WAITING_FOR_CONNECTED;
@@ -78,20 +68,16 @@ Se3HofCtrl::Se3HofCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &private
     last_arm_request_ = ros::Time(0);
     last_land_request_ = ros::Time(0);
 
-    private_nh_.param<double>("hover_percent", hover_percent_, 0.40);
+    private_nh_.param<double>("hover_percent", hover_percent_, 0.25);
     private_nh_.param<double>("max_hover_percent", max_hover_percent_, 0.75);
     // 悬停油门用于初始化 T_a_ 推力归一化常数(=g/hover_percent)，稳态由 estimateTa 在线估计修正；
     // 值域非法时回退默认，避免 T_a_ 初值发散
     if (hover_percent_ <= 0.0 || hover_percent_ > 1.0) {
-        hover_percent_ = 0.40;
+        hover_percent_ = 0.25;
     }
     if (max_hover_percent_ > 1.0 || max_hover_percent_ < hover_percent_) {
         max_hover_percent_ = 0.75;
     }
-    // 预热/解锁接管前油门：解锁后到 TAKEOFF 接管前(/mavros/state ~1Hz 回报延迟，可达 1s)
-    // 该指令持续生效，高于悬停油门会直接把飞机打上天(9-28 冲顶根因之一)
-    private_nh_.param<double>("idle_thrust", idle_thrust_, 0.15);
-    idle_thrust_ = std::min(std::max(idle_thrust_, 0.0), hover_percent_);
 
     se3_hof_.init(hover_percent_, max_hover_percent_, enu_frame_, vel_in_body_);
     if (use_dynamic_reconfigure_) {
@@ -237,30 +223,20 @@ void Se3HofCtrl::execFSMCallback(const ros::TimerEvent &e){
     case WAITING_FOR_OFFBOARD:{
         ROS_INFO_ONCE("Waiting for OFFBOARD mode and arming...");
         Controller_Output_t init_output;
-        // 预热指令必须无害：保持当前姿态(FCU 系) + 低于悬停的油门。
-        // 此前发送 0.6 油门 + 未初始化四元数，解锁瞬间即为 1.5 倍悬停推力，直接冲顶
-        init_output.q = imu_msg_received_ ? imu_data_.q : Eigen::Quaterniond(1.0, 0.0, 0.0, 0.0);
-        init_output.bodyrates.setZero();
-        init_output.thrust = idle_thrust_;
-        send_cmd(init_output, true); // stream setpoints to initialize the offboard mode
+        init_output.thrust = 0.6;
+        send_cmd(init_output, true); // send a zero command to initialize the offboard mode
         ++offboard_warmup_counter_;
         TrySetOffboard(now);
         TryArm(now);
         if(currState_.mode == "OFFBOARD" && currState_.armed){
             if(auto_takeoff_){
                 ROS_INFO("Offboard and armed! Taking off...");
-                // 柔和起飞：位置/偏航锚定当前状态，避免横向/偏航阶跃；
-                // 高度不直接设目标值，交给 TAKEOFF 内的斜坡抬升
-                desired_state_.p(0) = odom_data_.p(0);
-                desired_state_.p(1) = odom_data_.p(1);
-                desired_state_.p(2) = odom_data_.p(2);
-                desired_state_.yaw = utils::fromQuaternion2yaw(odom_data_.q);
-                takeoff_start_z_ = odom_data_.p(2);
-                takeoff_start_time_ = now;
-                takeoff_reached_ = false;
+                desired_state_.p(0) = 0.0;
+                desired_state_.p(1) = 0.0;
+                desired_state_.p(2) = takeoff_height_;
+                desired_state_.yaw = 0.0;
                 flightState_ = TAKEOFF;
             }else{
-                takeoff_reached_ = true;  // 无自动起飞：直接进任务态，当前高度即有效
                 flightState_ = MISSION_EXECUTION;
             }
         }
@@ -268,26 +244,13 @@ void Se3HofCtrl::execFSMCallback(const ros::TimerEvent &e){
     }
     case TAKEOFF:{
         ROS_INFO_ONCE("Auto Taking off...");
-        // 高度设定按 takeoff_speed_ 线性抬升到 takeoff_height_，并给速度前馈。
-        // 此前对 takeoff_height_ 的阶跃目标会令 v_des = Kp_p*err_p 达 2~4.5 m/s、
-        // 净加速 +3 m/s²(猛冲)；斜坡+前馈下稳态位置误差收敛到 0，油门全程≈悬停值
-        const double t_elapse = std::max(0.0, (now - takeoff_start_time_).toSec());
-        const double z_ramp = takeoff_start_z_ + takeoff_speed_ * t_elapse;
-        if (z_ramp < takeoff_height_) {
-            desired_state_.p(2) = z_ramp;
-            desired_state_.v(2) = takeoff_speed_;
-        } else {
-            desired_state_.p(2) = takeoff_height_;
-            desired_state_.v(2) = 0.0;
-        }
         Controller_Output_t output;
         if(se3_hof_.calControl(odom_data_, imu_data_, desired_state_, output)){
             send_cmd(output, true);
-            se3_hof_.estimateTa(imu_data_.a, odom_data_);
+            se3_hof_.estimateTa(imu_data_.a);
         }
         if(fabs(odom_data_.p(2) - takeoff_height_) < 0.1){
             ROS_INFO("TakeOff Complete");
-            takeoff_reached_ = true;
             flightState_ = MISSION_EXECUTION;
         }
         break;
@@ -298,7 +261,7 @@ void Se3HofCtrl::execFSMCallback(const ros::TimerEvent &e){
         Controller_Output_t output;
         if(se3_hof_.calControl(odom_data_, imu_data_, desired_state_, output)){
             send_cmd(output, true);
-            se3_hof_.estimateTa(imu_data_.a, odom_data_);
+            se3_hof_.estimateTa(imu_data_.a);
         }
         break;
     }
@@ -307,7 +270,7 @@ void Se3HofCtrl::execFSMCallback(const ros::TimerEvent &e){
         Controller_Output_t output;
         if(se3_hof_.calControl(odom_data_, imu_data_, desired_state_, output)){
             send_cmd(output, true);
-            se3_hof_.estimateTa(imu_data_.a, odom_data_);
+            se3_hof_.estimateTa(imu_data_.a);
         }
         if((now - last_planner_msg_time_).toSec() < planner_timeout_){
             ROS_WARN("se3_hof: planner stream resumed, back to MISSION_EXECUTION.");
@@ -379,12 +342,6 @@ void Se3HofCtrl::pubLocalPose(const Eigen::Vector3d &pose)
     msg.pose.position.x = pose[0];
     msg.pose.position.y = pose[1];
     msg.pose.position.z = pose[2];
-    // 偏航保持当前值（fastlio 系 yaw 投影）——全零四元数非法，PX4 会拒绝设定点
-    const Eigen::Quaterniond &q = odom_data_.q;
-    const double yaw = std::atan2(2.0 * (q.w() * q.z() + q.x() * q.y()),
-                                  1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z()));
-    msg.pose.orientation.w = std::cos(yaw * 0.5);
-    msg.pose.orientation.z = std::sin(yaw * 0.5);
 
     local_pos_pub_.publish(msg);
 }
@@ -392,8 +349,6 @@ void Se3HofCtrl::pubLocalPose(const Eigen::Vector3d &pose)
 bool Se3HofCtrl::landCallback(std_srvs::SetBool::Request &request, std_srvs::SetBool::Response &response) {
     ROS_INFO("trigger land!");
     flightState_ = LANDING;
-    response.success = true;      // 不填时默认 False，mission_state 日志会误报失败
-    response.message = "landing triggered";
     return true;
 }
 
@@ -502,12 +457,6 @@ void Se3HofCtrl::TryArm(const ros::Time &now) {
 
 void Se3HofCtrl::plannerOutputCallback(const planner_ctrl::PlannerOutput::ConstPtr &msg)
 {
-    // 起飞未达预定高度前不接受规划器航点：地面/爬升段检测器就可能锁框发 goal，
-    // 提前喂入会把 desired_state_ 从起飞目标拉走，导致爬升轨迹被干扰
-    if (!takeoff_reached_) {
-        ROS_WARN_STREAM_THROTTLE(3.0, "se3_hof: planner output ignored before takeoff height reached.");
-        return;
-    }
     if (msgExpired(msg->header.stamp, "planner_output")) {
         return;
     }

@@ -1,7 +1,7 @@
 <launch>
 
-  <arg name="odom_topic" default="/Odometry"/>
-  <arg name="takeoff_height" default="1.0"/>
+  <arg name="odom_topic" default="/mavros/local_position/odom"/>
+  <arg name="takeoff_height" default="0.8"/>
   <arg name="pid_enabled" default="true"/>
   <arg name="pid_kp" default="0.35"/>
   <arg name="pid_ki" default="0.0"/>
@@ -10,6 +10,9 @@
   <arg name="pid_output_limit" default="1.5"/>
   <arg name="position_kp" default="0.35"/>
   <arg name="position_error_limit" default="1.0"/>
+  <!-- 加速度前馈超前时间(s)：v_cmd = v + a·τ 补链路相位滞后；0=关闭。
+       0.1 起步，跟踪仍滞后加到 0.15~0.25，超前振荡则减小 -->
+  <arg name="acc_ff_time" default="0.1"/>
 
   <node pkg="planner_ctrl" name="ctrl_v1" type="ctrl_v1" output="screen">
     <remap from="/Odometry" to="$(arg odom_topic)"/>
@@ -22,5 +25,6 @@
     <param name="pid_output_limit" value="$(arg pid_output_limit)" type="double"/>
     <param name="position_kp" value="$(arg position_kp)" type="double"/>
     <param name="position_error_limit" value="$(arg position_error_limit)" type="double"/>
+    <param name="acc_ff_time" value="$(arg acc_ff_time)" type="double"/>
   </node>
 </launch>

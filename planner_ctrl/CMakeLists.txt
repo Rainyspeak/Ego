@@ -189,6 +189,7 @@ target_link_libraries(se3_hof
 catkin_install_python(PROGRAMS
   scripts/planner_adapter.py
   scripts/mission_state.py
+  scripts/real_mission.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

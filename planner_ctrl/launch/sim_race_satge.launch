@@ -5,13 +5,13 @@
   -->
   <arg name="start_rviz" default="true"/>
   <arg name="goal_z" default="-1.0"/>
-  <arg name="goal_exit_dist" default="0.6"/>
+  <arg name="goal_exit_dist" default="1.3"/>
   <arg name="enable_skeleton" default="true"/>
   <!-- path_manager carrot 前视距离（传给 path_snap.launch）：建议 ≥
-       fsm/planning_horizon（sim 为 3.5）。window_detector 的单点 goal 在
+       fsm/planning_horizon（sim 为 3.5）。forecast_searching 的单点 goal 在
        path_manager 里逐条替换任务，等效透传；往 /path_manager/path 发整条
        nav_msgs/Path 即可执行多航点任务 -->
-  <arg name="lookahead_distance" default="3.5"/>
+  <arg name="lookahead_distance" default="4.5"/>
   <!-- se3 保护参数：地理围栏半宽/高度上限（超出触发保护降落）、规划器指令
        新鲜度（静默超时判 PLANNER_LOST；0.05 为仿真值，实机 0.01） -->
   <arg name="geo_fence_x" default="20"/>
@@ -30,7 +30,7 @@
     <arg name="lookahead_distance" value="$(arg lookahead_distance)"/>
   </include>
 
-  <include file="$(find window_detector)/launch/window_detector_sim.launch">
+  <include file="$(find forecast_searching)/launch/forecast_searching_sim.launch">
     <arg name="goal_z" value="$(arg goal_z)"/>
     <arg name="goal_exit_dist" value="$(arg goal_exit_dist)"/>
     <arg name="enable_skeleton" value="$(arg enable_skeleton)"/>
@@ -38,17 +38,10 @@
     <arg name="publish_path" value="true"/>
   </include>
 
-  <include file="$(find planner_ctrl)/launch/ctrl_se3_hof.launch">
+  <!--<include file="$(find planner_ctrl)/launch/ctrl_se3_hof.launch">
     <arg name="geo_fence_x" value="$(arg geo_fence_x)"/>
     <arg name="geo_fence_y" value="$(arg geo_fence_y)"/>
     <arg name="geo_fence_z" value="$(arg geo_fence_z)"/>
-    <arg name="msg_expire_time" value="$(arg msg_expire_time)"/>
-  </include>
-
-  <!-- ctrl_v1  -->
-  <!--<include file="$(find planner_ctrl)/launch/ctrl_planner.launch">
-    <arg name="odom_topic" value="/mavros/local_position/odom"/>
-    <arg name="takeoff_height" value="1.5"/>
   </include>-->
 
   <!-- 任务流程状态机（无自动降落：RECALL 到位后悬停，切 POSITION 接管） -->

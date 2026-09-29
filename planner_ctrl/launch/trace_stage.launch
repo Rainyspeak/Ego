@@ -5,7 +5,7 @@
   <arg name="goal_exit_dist" default="0.6"/>
   <arg name="enable_skeleton" default="true"/>
   <!-- path_manager carrot 前视距离（传给 path_snap.launch）：建议 ≥
-       fsm/planning_horizon（sim 为 3.5）。window_detector 的单点 goal 在
+       fsm/planning_horizon（sim 为 3.5）。forecast_searching 的单点 goal 在
        path_manager 里逐条替换任务，等效透传；往 /path_manager/path 发整条
        nav_msgs/Path 即可执行多航点任务 -->
   <arg name="lookahead_distance" default="3.5"/>
@@ -19,7 +19,10 @@
 
   <arg name="odom_topic" default="/Odometry"/>
   <arg name="takeoff_height" default="1.0"/>
-  <!-- 最后一个航点（返航终点）：手动指定，默认 (0, 0)，高度=起飞高度 -->
+  <!-- 回溯开关：true=达标后 RECALL 回溯航点返 home（到位悬停人工接管）；
+       false=达标后当前位置降落（AUTO.LAND） -->
+  <arg name="return_home" default="true"/>
+  <!-- 最后一个航点（返航终点，return_home:=true 时用）：手动指定，默认 (0, 0)，高度=起飞高度 -->
   <arg name="home_x" default="0.0"/>
   <arg name="home_y" default="0.0"/>
 
@@ -34,7 +37,7 @@
     <arg name="lookahead_distance" value="$(arg lookahead_distance)"/>
   </include>
 
-  <include file="$(find window_detector)/launch/real.launch">
+  <include file="$(find forecast_searching)/launch/real.launch">
     <arg name="odom_topic" value="$(arg odom_topic)"/>
     <arg name="goal_z" value="$(arg goal_z)"/>
     <arg name="goal_exit_dist" value="$(arg goal_exit_dist)"/>
@@ -58,12 +61,14 @@
     <arg name="takeoff_height" value="1.5"/>
   </include>-->
 
-  <!-- 任务流程状态机 -->
-  <node pkg="planner_ctrl" type="mission_state.py" name="mission_state" output="screen">
+  <!-- 任务流程状态机（实机专用 real_mission：ctrl_v1 纯 mavros 判定 + 检测器
+       pause 开关；仿真 se3 链用原版 mission_state.py，在 sim_race_satge 里） -->
+  <node pkg="planner_ctrl" type="real_mission.py" name="real_mission" output="screen">
     <param name="goal_topic" value="/move_base_simple/goal"/>
     <param name="odom_topic" value="$(arg odom_topic)"/>
     <param name="target_frames" value="3"/>
     <param name="total_frames" value="3"/>
+    <param name="return_home" value="$(arg return_home)"/>
     <!-- 最后一个航点：手动指定（home_x/home_y 顶层 arg，默认 0,0），高度=起飞高度-->
     <param name="home_x" value="$(arg home_x)"/>
     <param name="home_y" value="$(arg home_y)"/>

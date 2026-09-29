@@ -401,7 +401,7 @@ void PathManager::rebuildLengths() {
 
 // 框心穿越计数输出：centers_ 中已越过（passed）的框心数。穿越判定 = 路径
 // 进度越过已登记框心 0.5 m，与检测器锁定状态解耦——锁丢失/幻影重锁时
-// window_detector 的穿越事件（status done=N）会漏计（实测 6-7/9），此计数
+// forecast_searching 的穿越事件（status done=N）会漏计（实测 6-7/9），此计数
 // 以存储框心为准补齐；回溯进入时全部置 passed（计数=登记总数）。latch。
 void PathManager::publishFrameCount() {
   std_msgs::Int32 msg;

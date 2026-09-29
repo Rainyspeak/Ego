@@ -46,9 +46,6 @@ private:
     bool arm_triggered_{false};
     bool offboard_triggered_{false};
     bool auto_takeoff_{false};
-    // 起爬到位标志：TAKEOFF 完成(|z-takeoff_height|<0.1)置 true，plannerOutputCallback
-    // 在此之前丢弃规划器航点；WAITING_FOR_OFFBOARD→TAKEOFF 复位
-    bool takeoff_reached_{false};
     bool use_dynamic_reconfigure_{false};
     bool landing_locked_{false};
     bool enable_auto_offboard_{false};
@@ -71,18 +68,13 @@ private:
     double imu_timeout_{0.5};
     double odom_timeout_{0.5};
     double odom_vel_threshold_{3.0};
-    string odom_topic_;  // 里程计来源（参数 odom_topic，默认 mavros；实机 fastlio /Odometry）
     ros::Time last_land_request_;
     double takeoff_height_;
-    double takeoff_speed_{0.4};     // TAKEOFF 爬升率(m/s)
-    double takeoff_start_z_{0.0};   // 进入 TAKEOFF 时的里程计高度(斜坡起点)
-    ros::Time takeoff_start_time_;
     Eigen::Vector3d init_pose_, geo_fence_;;
 
     Eigen::Vector3d kp_p_, kp_v_, kp_a_, kp_q_, kp_w_, kd_p_, kd_v_, kd_a_, kd_q_, kd_w_;
     double limit_err_p_, limit_err_v_, limit_err_a_, limit_d_err_p_, limit_d_err_v_, limit_d_err_a_;
     double hover_percent_, max_hover_percent_;
-    double idle_thrust_{0.15};  // OFFBOARD 预热/解锁接管前发送的油门，必须低于悬停油门
     bool enu_frame_, vel_in_body_;
 
     dynamic_reconfigure::Server<planner_ctrl::se3_hof_tuneConfig> dynamic_tune_server_;
