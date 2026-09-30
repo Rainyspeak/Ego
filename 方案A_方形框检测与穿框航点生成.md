@@ -33,7 +33,7 @@ LiDAR 点云稀疏、无纹理、强度不可靠，基于局部描述子的特�
 
 ```
                        ┌────────────────────────────────────────────────┐
- /cloud_ego_registered │ window_detector 节点                            │
+ /cloud_ego_registered │ forecast_searching 节点                            │
  ─────────────────────>│  ┌──────────┐   ┌────────────┐   ┌──────────┐  │
  /Odometry             │  │ 单帧检测  │──>│ 时间稳定器  │──>│ 航点生成  │  │
  ─────────────────────>│  │ (无状态)  │   │ (状态机)    │   │ P1/P2/P3 │  │
@@ -62,7 +62,7 @@ LiDAR 点云稀疏、无纹理、强度不可靠，基于局部描述子的特�
 | PX4 控制器 | `Ego/planner_ctrl`（ctrl_v1 / ctrl_ego_waypoints / se3_hof） | 现成 |
 | 点云预处理 | `cloud_preprocess.cpp`（机体裁剪 + 体素 0.15） | 现成；后级 0.05 m 降采样无法恢复已丢失的细框点，检测输入需改为更密的点云或把上游体素调到 ≤0.05 m |
 | 航点入口（将来） | `flight_type=1` 时 FSM 订阅 `/waypoint_generator/waypoints` | 第 7 节使用 |
-| 框检测 | `Ego/planner/window_detector` | **本方案新增** |
+| 框检测 | `Ego/planner/forecast_searching` | **本方案新增** |
 
 ---
 
@@ -70,7 +70,7 @@ LiDAR 点云稀疏、无纹理、强度不可靠，基于局部描述子的特�
 
 ### 4.1 节点接口
 
-新包 `Ego/planner/window_detector`，单节点 `window_detector_node`：
+新包 `Ego/planner/forecast_searching`，单节点 `forecast_searching_sim`：
 
 | 方向 | 名称 | 类型 | 说明 |
 |---|---|---|---|
@@ -274,7 +274,7 @@ P1 = (0.5, 0, 1.2)，P2 = (2, 0, 1.2)，P3 = (4.5, 0, 1.2)。
 `scripts/fake_frame_cloud.py` 以 10 Hz 发布合成框点云 + 带正弦漂移的悬停里程计：
 
 ```bash
-roslaunch window_detector window_detector_sim.launch   # 假数据 + 检测节点 + rviz
+roslaunch forecast_searching forecast_searching_sim.launch   # 假数据 + 检测节点 + rviz
 ```
 
 验收：RViz 中粉色框线框贴合点云框、绿色箭头指向穿行方向、三个航点球位置正确；故意把脚本参数改成非方形/小板时，`~status` 显示对应拒绝原因、无航点输出；同时发布两个同样合格的框时应报告 `AMBIGUOUS_TARGET`。验证冻结后继续扰动检测，已提交航点不得改变。
@@ -298,7 +298,7 @@ roslaunch window_detector window_detector_sim.launch   # 假数据 + 检测节�
 `sim.launch`/`mid360.launch` 中 `flight_type=1`（MANUAL_TARGET）时 FSM 订阅 `/waypoint_generator/waypoints`（nav_msgs/Path）。集成只需一步 remap：
 
 ```xml
-<remap from="/window_detector/waypoints" to="/waypoint_generator/waypoints"/>
+<remap from="/forecast_searching/waypoints" to="/waypoint_generator/waypoints"/>
 ```
 
 （或绕过 waypoint_generator 直发 FSM 订阅的话题，二者消息类型相同。）
@@ -336,13 +336,13 @@ roslaunch window_detector window_detector_sim.launch   # 假数据 + 检测节�
 ## 9. 工程结构与实施进度
 
 ```
-Ego/planner/window_detector/
-├── include/window_detector/frame_detector.h   # 核心算法（零依赖纯 C++）✅ 已完成初版
-├── src/window_detector_node.cpp               # ROS 节点（薄壳）          ⬜
+Ego/planner/forecast_searching/
+├── include/forecast_searching/frame_detector.h   # 核心算法（零依赖纯 C++）✅ 已完成初版
+├── src/forecast_searching_sim.cpp               # ROS 节点（薄壳）          ⬜
 ├── test/test_frame_detector.cpp               # 离线单测（T1–T17）        ⬜
 ├── scripts/fake_frame_cloud.py                # RViz 假数据联调           ⬜
-├── launch/window_detector.launch              # 实机 launch               ⬜
-├── launch/window_detector_sim.launch          # 仿真联调 launch           ⬜
+├── launch/forecast_searching.launch              # 实机 launch               ⬜
+├── launch/forecast_searching_sim.launch          # 仿真联调 launch           ⬜
 ├── package.xml / CMakeLists.txt               # 包定义                    ⬜
 └── README.md                                  # 使用说明                  ⬜
 ```

@@ -396,7 +396,7 @@ void Planner_Control()
 
 int main(int argc, char **argv)
 {
-	ros::init(argc, argv, "cxr_egoctrl_v1");
+	ros::init(argc, argv, "ctrl_v1");
 	setlocale(LC_ALL,"");
 	ros::NodeHandle nh;
 	ros::NodeHandle nh_("~");
@@ -457,8 +457,7 @@ int main(int argc, char **argv)
 	{
     // 先接收最新指令，再判断有效期，避免多使用上一周期的速度。
     ros::spinOnce();
-    if (receive &&
-        (ros::SteadyTime::now() - last_planner_receive_time).toSec() >= kPlannerTimeout)
+    if (receive && (ros::SteadyTime::now() - last_planner_receive_time).toSec() >= kPlannerTimeout)
     {
       receive = false;
       // 超时瞬间锁定当前位置，原地悬停等规划器重新规划

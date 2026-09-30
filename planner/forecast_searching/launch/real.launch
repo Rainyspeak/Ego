@@ -1,7 +1,10 @@
 <launch>
 
-  <arg name="cloud_topic" default="/livox/lidar_world"/>
-  <arg name="odom_topic" default="/mavros/local_position/odom"/>
+  <!-- 实机稠密点云版：node 为 forecast_searching_real（入口预筛 + 稠密参数档），
+       仿真稀疏云版是 forecast_searching_sim（forecast_searching_sim.launch）。
+       两者话题/服务/参数名完全一致，可互换。 -->
+  <arg name="cloud_topic" default="/cloud_registered"/>
+  <arg name="odom_topic" default="/Odometry"/>
   <arg name="publish_goal" default="true"/>
   <!-- 注视三航点批量入队模式：锁定期间把本框 [P1,P2,P3] 一组发到 path_out_topic
        （path_manager enqueue_batch，队尾原位更新/新框整批追加）。开启时 goal
@@ -14,27 +17,36 @@
   <arg name="goal_exit_dist" default="1.3"/>
   <!-- 自定义航点高度：-1=跟随检测框心高度；改成 ≥0 的值（如 1.2）即强制该高度 -->
   <arg name="goal_z" default="1.0"/>
-  <!-- 仿真云已过 0.15 m 体素，细框点更少，放宽最小点数（锁不上再往下调/换更粗的框） -->
 
-  <arg name="min_cluster_points" default="20"/>
-  <arg name="min_plane_inliers" default="5"/>
+  <!-- ===== 稠密云密度档（仿真版为稀疏云放宽值，此处收紧）=====
+       voxel_leaf      检测体素(m)：0.08 计算量比 0.05 降约 60%，2.15 m 环单圈
+                       ~85 个体素点仍够圆拟合；锁不上回调 0.05
+       min_cluster_points 最小簇点数：稠密云碎片小簇大量存在，20 会满屏误检；
+                       0.08 体素下近距开弧（50-70% 覆盖）约 40-60 点，60 拒碎片不伤开弧
+       min_plane_inliers   平面最少内点：稠密云下真框内点数百起，30 拒薄碎片
+       cluster_tol     聚类连通阈值(m)：稠密云下 0.4 会把框与墙/支架黏成一大簇，
+                       收回到 0.25；仍黏连时再调小 -->
+  <arg name="voxel_leaf" default="0.08"/>
+  <arg name="min_cluster_points" default="60"/>
+  <arg name="min_plane_inliers" default="30"/>
+  <arg name="cluster_tol" default="0.25"/>
   <!-- 近距(约<1.5 m)时框近弧落入 min_range 盲区，中心估计逐帧跳变导致候选窗反复清空锁不上：
-       缩小 min_range 保留更多近弧点 + 放宽一致性阈值让 EMA 收敛，实测可近距锁定。
+       缩小 min_range 保留更多近弧点 + 放宽一致性阈值让 EMA 收敛。
        center_consistency 0.9：2.5-3.5 m 中距上圆环中心估计跳变可达 ±0.7，0.6 会反复清窗
        （run7 实测卡死点）；锁定初值取窗口中位数，放宽窗口不引入偏差 -->
   <arg name="min_range" default="0.35"/>
   <arg name="center_consistency" default="0.9"/>
   <arg name="lock_count" default="4"/>
-  <arg name="cluster_tol" default="0.4"/>
   <!-- 检测范围与几何窗：
-       max_range     ROI 远距(m)：超出此距离的框不检测
-       cluster_tol   聚类连通阈值(m)：框与墙/支架黏成一大簇时调小
-       视角/尺寸窗    max_view_angle_deg=65、min/max_frame_size=0.55/2.5 -->
+       max_range     ROI 远距(m)：超出此距离的框不检测（入口预筛再留 1 m 余量）
+       视角/尺寸窗    max_view_angle_deg=120、min/max_frame_size=1.0/3.0 -->
   <arg name="max_range" default="6.0"/>
   <arg name="max_view_angle_deg" default="120.0"/>
   <arg name="min_frame_size" default="1.0"/>
   <arg name="max_frame_size" default="3"/>
-  <arg name="accumulate_time" default="1.0"/>
+  <!-- 实机单帧已稠密，累积只补近弧/遮挡轮廓（仿真版靠 1 s 长窗补稀疏单帧）；
+       窗口内机体弧长超 accumulate_max_dist 时自动收缩 -->
+  <arg name="accumulate_time" default="0.5"/>
   <!-- 骨架环检测（方向 A）总开关：A/B 定位方框中心偏移回归用 -->
   <arg name="enable_skeleton" default="true"/>
 
@@ -52,7 +64,7 @@
   <arg name="traversed_mark_clear" default="0.15"/>  <!-- 沿法向越过平面的判定距离(m) -->
   <arg name="traversed_axis_margin" default="0.5"/>  <!-- 横向偏差容许余量(m)，绕框侧飞不算穿越 -->
 
-  <node pkg="window_detector" type="window_detector_node" name="window_detector" output="screen">
+  <node pkg="forecast_searching" type="forecast_searching_real" name="forecast_searching" output="screen">
     <remap from="~cloud" to="$(arg cloud_topic)"/>
     <remap from="~odom" to="$(arg odom_topic)"/>
     <param name="publish_goal" value="$(arg publish_goal)"/>
@@ -61,6 +73,7 @@
     <param name="circle_known_diameter" value="$(arg circle_known_diameter)"/>
     <param name="goal_exit_dist" value="$(arg goal_exit_dist)"/>
     <param name="goal_z" value="$(arg goal_z)"/>
+    <param name="voxel_leaf" value="$(arg voxel_leaf)"/>
     <param name="min_cluster_points" value="$(arg min_cluster_points)"/>
     <param name="min_plane_inliers" value="$(arg min_plane_inliers)"/>
     <param name="min_range" value="$(arg min_range)"/>
