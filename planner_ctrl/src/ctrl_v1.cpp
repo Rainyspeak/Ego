@@ -83,6 +83,7 @@ struct Speed_limit
     }
   }
 };
+
 class VelocityPid
 {
 public:
@@ -126,8 +127,11 @@ double VelocityPid::update(double desired, double measured,double &integral, dou
     integral += error * dt;
     integral = std::max(-pid_integral_limit,
                         std::min(pid_integral_limit, integral));
+
     const double derivative = (error - previous_error) / dt;
     previous_error = error;
+
+    //返回修正的pid速度 
     return desired + pid_kp * error + pid_ki * integral + pid_kd * derivative;
 }
 void VelocityPid::updateTime(const ros::Time &now)
@@ -337,7 +341,6 @@ void Planner_Control()
   double velocity_z = ego_vel(2);
 
   // 加速度前馈：v(t+τ) ≈ v(t) + a·τ，指令提前 τ 秒到达，补相位滞后；
-  // 转弯/加减速段的跟踪刚度主要由这段提供（ego_acc 为 EGO 轨迹加速度，世界系）
   velocity_x += acc_ff_time * ego_acc(0);
   velocity_y += acc_ff_time * ego_acc(1);
   velocity_z += acc_ff_time * ego_acc(2);
@@ -428,9 +431,9 @@ int main(int argc, char **argv)
 	ros::service::waitForService("/mavros/set_mode");
 
 	ros::ServiceClient arming_client = nh.serviceClient<mavros_msgs::CommandBool>
-	("/mavros/cmd/arming");//解锁飞机的服务端
+	("/mavros/cmd/arming");
 	ros::ServiceClient set_mode_client = nh.serviceClient<mavros_msgs::SetMode>
-	("/mavros/set_mode");//设置飞机飞行模式的服务端
+	("/mavros/set_mode");
 	
 	ros::Subscriber twist_sub = nh.subscribe<quadrotor_msgs::PositionCommand>
 	("/planner_cmd", 1, twist_planner_cb, ros::TransportHints().tcpNoDelay());
@@ -467,22 +470,6 @@ int main(int argc, char **argv)
       ROS_WARN("Planner command timeout (%.0f ms), holding position, waiting for re-plan",
                kPlannerTimeout * 1000.0);
     }
-		// if(receive && odom_received)
-		// {
-		// 	if(Arrival_State())
-		// 	{
-		// 		Position_Hold();
-		// 	}
-		// 	else
-		// 	{
-		// 		waypoint_hold = false;
-		// 		Planner_Control();
-		// 	}
-		// }
-		// else
-		// {
-		// 	Position_Hold();
-		// }
     if (receive && odom_received)
     {
       Planner_Control();

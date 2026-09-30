@@ -15,7 +15,6 @@
 
 namespace path_manager {
 
-// path_manager —— Super mission_manager 的 EGO 移植 + waypoint_generator 功能并入
 // （寄存航点 + 单点 goal 输入 + 20 Hz 跟随式目标 + 框心热存储/硬化 + 回溯）。
 //
 // 任务输入四路（回溯模式 recall_mode_ 下除显式 path_topic 新任务外全部屏蔽）：

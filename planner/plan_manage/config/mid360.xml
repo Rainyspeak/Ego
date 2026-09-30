@@ -63,7 +63,7 @@
     
 
     <!-- planning fsm -->
-    <!-- flight_type: 1=RViz 手动目标(window_detector 的 goal 也发到 /move_base_simple/goal 走这条)，2=预设航点序列 -->
+    <!-- flight_type: 1=RViz 手动目标(forecast_searching 的 goal 也发到 /move_base_simple/goal 走这条)，2=预设航点序列 -->
     <param name="fsm/flight_type" value="$(arg flight_type)" type="int"/>
     <param name="fsm/preset_wait_for_trigger" value="$(arg preset_wait_for_trigger)" type="bool"/>
     <!-- 距上次轨迹起点 < 该值(m) 不重规划，防原地反复重规划 -->

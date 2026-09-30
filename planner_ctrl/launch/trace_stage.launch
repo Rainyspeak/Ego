@@ -4,10 +4,7 @@
   <arg name="goal_z" default="-1.0"/>
   <arg name="goal_exit_dist" default="0.6"/>
   <arg name="enable_skeleton" default="true"/>
-  <!-- path_manager carrot 前视距离（传给 path_snap.launch）：建议 ≥
-       fsm/planning_horizon（sim 为 3.5）。forecast_searching 的单点 goal 在
-       path_manager 里逐条替换任务，等效透传；往 /path_manager/path 发整条
-       nav_msgs/Path 即可执行多航点任务 -->
+
   <arg name="lookahead_distance" default="3.5"/>
 
   <!-- se3 保护参数：地理围栏半宽/高度上限（超出触发保护降落）、规划器指令

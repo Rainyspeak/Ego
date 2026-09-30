@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>forecast_searching</name>
+  <version>0.1.0</version>
+  <description>
+    方案A：方形框检测与穿框航点生成。输入世界系点云（FAST-LIO 配准）+ 里程计，
+    输出稳定的穿框航点 P1/P2/P3（nav_msgs/Path）、框位姿与 RViz 可视化。
+    本阶段不接入 EGO-Planner；核心算法零依赖（无 PCL），可离线单测。
+  </description>
+  <maintainer email="dev@todo.todo">rainy</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>roscpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+</package>

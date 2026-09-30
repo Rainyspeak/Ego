@@ -1,0 +1,62 @@
+Panels:
+  - Class: rviz/Displays
+    Name: Displays
+  - Class: rviz/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Name: Grid
+      Plane Cell Size: 1
+      Normal Cell Count: 0
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Class: rviz/PointCloud2
+      Color Transformer: AxisColor
+      Enabled: true
+      Name: Cloud
+      Position Style: Flat Squares
+      Queue Size: 1
+      Size (m): 0.03
+      Style: Flat Squares
+      Topic: /livox/lidar_world
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Name: FrameMarkers
+      Queue Size: 10
+      Topic: /forecast_searching/markers
+      Value: true
+    - Class: rviz/Path
+      Enabled: true
+      Line Style: Billboards
+      Line Width: 0.05
+      Name: Waypoints
+      Queue Size: 1
+      Topic: /forecast_searching/waypoints
+      Value: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: world
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz/Interact
+    - Class: rviz/MoveCamera
+  Views:
+    Current:
+      Class: rviz/Orbit
+      Distance: 10
+      Focal Point:
+        X: 2
+        Y: 0
+        Z: 1
+      Name: Current View
+      Pitch: 0.3
+      Yaw: 0.8
+Window Geometry:
+  Height: 800
+  Width: 1200

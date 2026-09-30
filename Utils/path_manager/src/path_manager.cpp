@@ -1,6 +1,3 @@
-// path_manager 主逻辑（节点接口见 path_ctrl_node.cpp，类声明与行为/接线
-// 说明在 include/path_manager/path_manager.h）。内部几何一律 Eigen::Vector3d，
-// ROS 消息仅在边界转换。
 
 #include "path_manager/path_manager.h"
 
@@ -14,9 +11,13 @@ constexpr size_t PathManager::kNoSlot;
 
 PathManager::PathManager() : nh_(), pnh_("~") {
   pnh_.param<std::string>("path_topic", path_topic_, "/waypoint_generator/waypoints");
+
   pnh_.param<std::string>("goal_topic", goal_topic_, "/move_base_simple/goal");
+
   pnh_.param<std::string>("enqueue_topic", enqueue_topic_, "/path_manager/enqueue");
+
   pnh_.param<std::string>("enqueue_batch_topic", enqueue_batch_topic_, "/path_manager/enqueue_path");
+  
   pnh_.param<std::string>("center_topic", center_topic_, "/path_manager/frame_centers");
   pnh_.param<std::string>("recall_topic", recall_topic_, "/path_manager/recall");
   pnh_.param<std::string>("goal_path_topic", goal_path_topic_, "/path_manager/waypoints");

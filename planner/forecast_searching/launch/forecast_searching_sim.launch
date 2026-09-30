@@ -1,7 +1,7 @@
 <launch>
 
-  <arg name="cloud_topic" default="/cloud_registered"/>
-  <arg name="odom_topic" default="/Odometry"/>
+  <arg name="cloud_topic" default="/livox/lidar_world"/>
+  <arg name="odom_topic" default="/mavros/local_position/odom"/>
   <arg name="publish_goal" default="true"/>
   <!-- 注视三航点批量入队模式：锁定期间把本框 [P1,P2,P3] 一组发到 path_out_topic
        （path_manager enqueue_batch，队尾原位更新/新框整批追加）。开启时 goal
@@ -52,7 +52,7 @@
   <arg name="traversed_mark_clear" default="0.15"/>  <!-- 沿法向越过平面的判定距离(m) -->
   <arg name="traversed_axis_margin" default="0.5"/>  <!-- 横向偏差容许余量(m)，绕框侧飞不算穿越 -->
 
-  <node pkg="window_detector" type="window_detector_node" name="window_detector" output="screen">
+  <node pkg="forecast_searching" type="forecast_searching_sim" name="forecast_searching" output="screen">
     <remap from="~cloud" to="$(arg cloud_topic)"/>
     <remap from="~odom" to="$(arg odom_topic)"/>
     <param name="publish_goal" value="$(arg publish_goal)"/>
